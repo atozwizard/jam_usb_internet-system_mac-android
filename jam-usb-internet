@@ -197,33 +197,45 @@ ensure_admin_if_interactive() {
 }
 
 ensure_admin_for_system() {
+  jam_usb_export_askpass
+
   if (( EUID == 0 )); then
     return 0
   fi
-  if sudo -n true >/dev/null 2>&1; then
-    return 0
-  fi
   if [[ -t 0 ]]; then
+    sudo -n true >/dev/null 2>&1 && return 0
     sudo -v || return 1
     return 0
   fi
   if [[ -n "${SUDO_ASKPASS:-}" && -x "${SUDO_ASKPASS}" ]]; then
     sudo -A -v || return 1
-    return 0
-  fi
-  if [[ -n "${JAM_USB_SUDO_ASKPASS:-}" && -x "${JAM_USB_SUDO_ASKPASS}" ]]; then
-    SUDO_ASKPASS="$JAM_USB_SUDO_ASKPASS" sudo -A -v || return 1
+    sudo -n true >/dev/null 2>&1 || return 1
     return 0
   fi
   return 1
 }
 
 run_privileged() {
+  jam_usb_export_askpass
+
   if (( EUID == 0 )); then
     "$@"
     return $?
   fi
-  sudo -n "$@"
+  if sudo -n "$@"; then
+    return 0
+  fi
+  if [[ -n "${SUDO_ASKPASS:-}" && -x "${SUDO_ASKPASS}" ]]; then
+    sudo -A "$@"
+    return $?
+  fi
+  return 1
+}
+
+jam_usb_export_askpass() {
+  if [[ -n "${JAM_USB_SUDO_ASKPASS:-}" && -x "${JAM_USB_SUDO_ASKPASS}" ]]; then
+    export SUDO_ASKPASS="$JAM_USB_SUDO_ASKPASS"
+  fi
 }
 
 usage() {
@@ -2287,11 +2299,29 @@ guard_recovery_watch() {
   warn "Cleanup guard finished repeated repair, but normal internet was not verified."
 }
 
+SYSTEM_MODE_CLEANED_UP=0
+
+system_mode_cleanup() {
+  local mode="${1:-normal}"
+
+  (( ${SYSTEM_MODE_CLEANED_UP:-0} )) && return 0
+  SYSTEM_MODE_CLEANED_UP=1
+  system_local_cleanup_once remote
+  rm -f "$SING_BOX_PID_FILE"
+  if [[ "$mode" == "normal" ]]; then
+    disarm_system_guard
+  else
+    warn "Keeping cleanup guard active after abnormal terminal exit."
+  fi
+}
+
 system_command() {
-  local sing_box_bin template sing_box_pid monitor_pid cleaned_up=0
+  local sing_box_bin template sing_box_pid monitor_pid
 
   require_macos
   ensure_state_dir
+  jam_usb_export_askpass
+  SYSTEM_MODE_CLEANED_UP=0
 
   if command -v sing-box >/dev/null 2>&1; then
     sing_box_bin="$(command -v sing-box)"
@@ -2301,6 +2331,13 @@ system_command() {
   fi
 
   if (( ! CHECK_ONLY )); then
+    if (( EUID != 0 )); then
+      if ! ensure_admin_for_system; then
+        fail "Administrator permission is required for system mode."
+        return 1
+      fi
+      ok "Administrator credentials cached for this session."
+    fi
     preclean_system_mode
     if (( ! FORCE_TUN )) && quick_internet_check; then
       ok "Normal Mac internet is already working. USB TUN was not started."
@@ -2354,72 +2391,51 @@ system_command() {
   info "Keep this terminal open. Press Ctrl-C to stop and clean up."
   say ""
 
-cleanup_system() {
-    local mode="${1:-normal}"
-    (( cleaned_up )) && return 0
-    cleaned_up=1
-    system_local_cleanup_once remote
-    rm -f "$SING_BOX_PID_FILE"
-    if [[ "$mode" == "normal" ]]; then
-      disarm_system_guard
-    else
-      warn "Keeping cleanup guard active after abnormal terminal exit."
-    fi
-  }
-  trap 'cleanup_system normal' INT EXIT
-  trap 'cleanup_system abnormal' TERM HUP
-
-  if (( EUID != 0 )); then
-    if ! ensure_admin_for_system; then
-      fail "Administrator permission is required for system mode."
-      cleanup_system
-      return 1
-    fi
-    ok "Administrator credentials cached for this session."
-  fi
+  trap 'system_mode_cleanup normal' INT EXIT
+  trap 'system_mode_cleanup abnormal' TERM HUP
 
   if ! start_system_guard; then
     fail "Could not start abnormal-exit cleanup guard; refusing to modify TUN routes/DNS."
-    cleanup_system
+    system_mode_cleanup
     return 1
   fi
 
   if ! sing_box_pid="$(start_sing_box_engine "$sing_box_bin")"; then
-    cleanup_system
+    system_mode_cleanup
     return 1
   fi
 
   if ! wait_for_tun_gateway; then
     fail "TUN gateway ${TUN_GATEWAY} did not appear."
-    cleanup_system
+    system_mode_cleanup
     return 1
   fi
 
   if ! install_manual_tun_routes; then
-    cleanup_system
+    system_mode_cleanup
     return 1
   fi
   if ! wait_for_local_dns; then
     fail "Local DNS at 127.0.0.1 did not answer. Refusing to change macOS DNS."
-    cleanup_system
+    system_mode_cleanup
     return 1
   fi
 
   if ! enable_dynamic_local_dns; then
     fail "Could not install temporary macOS DNS safely."
-    cleanup_system
+    system_mode_cleanup
     return 1
   fi
 
   if ! wait_for_macos_resolver; then
     fail "macOS resolver did not use the temporary local DNS."
-    cleanup_system
+    system_mode_cleanup
     return 1
   fi
 
   if ! basic_network_check system; then
     fail "System mode started, but app connectivity checks failed. Cleaning up."
-    cleanup_system
+    system_mode_cleanup
     return 1
   fi
 
