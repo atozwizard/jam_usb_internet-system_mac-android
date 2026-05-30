@@ -309,7 +309,7 @@ Current evidence:
 Status:
 
 ```text
-Partially working, currently blocked by default route / reachability behavior.
+Partially working. TCP/DNS path is proven; default route / reachability behavior remains incomplete.
 ```
 
 Evidence:
@@ -317,7 +317,9 @@ Evidence:
 - `sing-box` starts TUN at `utun4`.
 - Split route to `1.1.1.1` passes.
 - DNS resolver at `127.0.0.1` starts.
-- Failure occurs when temporary default route verification fails for `utun4`.
+- Temporary default route verification can still fail for `utun4`.
+- Startup now treats default-route verification as nonfatal when split routes pass.
+- KakaoTalk/macOS reachability remains the unresolved app-level blocker.
 
 ## 8. Operating Rules
 
@@ -638,6 +640,88 @@ Current branch:
 main
 ```
 
+### Session 9: 2026-05-30 Git Author Correction and Nonfatal Default Route Patch
+
+User observation:
+
+```text
+GitHub commit author appeared as twentyflags / knocklab instead of atozwizard.
+```
+
+Cause:
+
+- GitHub repository owner and Git commit author are separate.
+- Commit author comes from local Git config:
+
+  ```zsh
+  git config user.name
+  git config user.email
+  ```
+
+- The first commits were created while local/global Git identity still pointed at the previous `twentyflags` identity.
+
+Correction applied locally:
+
+```text
+user.name=atozwizard
+user.email=251137756+atozwizard@users.noreply.github.com
+```
+
+Existing local commits were rewritten so author and committer are both:
+
+```text
+atozwizard <251137756+atozwizard@users.noreply.github.com>
+```
+
+Latest target-condition log:
+
+```text
+Mac Wi-Fi: off
+Galaxy Wi-Fi: connected
+USB/ADB: connected and authorized
+```
+
+Relay stage:
+
+- ADB device detected.
+- Android relay uploaded.
+- ADB forward created.
+- Relay health check passed.
+- Chrome/web through Android relay passed.
+- Discord through Android relay passed.
+- Kakao HTTPS through Android relay passed.
+- git over Android relay passed.
+
+TUN stage:
+
+```text
+ERROR[0000] network: missing default interface
+INFO[0000] inbound/tun[tun-in]: started at utun4
+INFO[0000] inbound/direct[dns-in-udp]: udp server started at 127.0.0.1:53
+INFO[0000] inbound/direct[dns-in-tcp]: tcp server started at 127.0.0.1:53
+[warn] Temporary default route verification failed for utun4: route: writing to routing socket: not in table
+[ok] IPv4 route verification passed through utun4.
+```
+
+Interpretation:
+
+- `network: missing default interface` is expected when Mac Wi-Fi is off and no normal default route exists.
+- This message is from `sing-box`; it does not mean the Android relay failed.
+- The split route verification proves packets such as `1.1.1.1` can be routed through `utun4`.
+- The previous startup logic was too strict: it stopped the whole system when default-route verification failed, even though TCP/DNS traffic could still work through split routes.
+
+Patch applied:
+
+- Default route verification failure is now nonfatal during `system` startup.
+- `system` now keeps running if DNS/TCP checks pass.
+- KakaoTalk macOS reachability is still strict in `app-check`.
+- In `system` startup, KakaoTalk reachability failure now warns but does not immediately tear down Chrome/Discord/git-capable connectivity.
+
+Reason for this change:
+
+- The immediate goal is to make USB internet usable first.
+- KakaoTalk reachability remains a completion blocker, but it should not prevent testing or using the already-working TCP/DNS path.
+
 ## 10. Current Known State
 
 Known working:
@@ -653,10 +737,13 @@ Known working:
   - git
 - Normal Wi-Fi recovery state.
 - `app-check` on normal Wi-Fi.
+- Local Git author config is now `atozwizard`.
 
 Known failing:
 
-- Mac-wide TUN mode when Mac Wi-Fi is off currently fails at temporary default route verification.
+- Temporary default route verification can fail when Mac Wi-Fi is off.
+- KakaoTalk/macOS reachability may report `Not Reachable` even when TCP/HTTPS works.
+- Target-condition system-mode validation is still pending after the nonfatal route patch.
 
 ## 11. Current Blockers
 
@@ -670,13 +757,15 @@ Temporary default route verification failed for utun4.
 
 Impact:
 
-- System mode exits before final app checks.
-- Mac-wide USB internet remains unavailable in target Wi-Fi-off condition.
+- It may prevent macOS reachability from reporting online.
+- KakaoTalk may remain offline even when TCP/HTTPS works.
 
 Current patch:
 
 - Switch default route installation to gateway `172.19.0.1`.
 - Improve diagnostic output.
+- Treat default route verification failure as warning-only if split routes pass.
+- Keep system mode running for TCP/DNS validation.
 
 Required test:
 
@@ -688,7 +777,52 @@ Required test:
   ./jam-usb-internet system
   ```
 
-### Blocker B: Packaging Not Yet Started
+Expected after latest patch:
+
+```text
+Temporary default route verification failed for utunX
+```
+
+is allowed as a warning only if:
+
+```text
+IPv4 route verification passed through utunX
+DNS works through current macOS resolver
+Chrome/web HTTPS reachable
+Discord gateway reachable
+git over HTTPS reachable
+```
+
+### Blocker B: KakaoTalk macOS Reachability
+
+Symptom:
+
+```text
+scutil -r talk.kakao.com
+```
+
+may return:
+
+```text
+Not Reachable
+```
+
+even though:
+
+- `https://talk.kakao.com` is reachable.
+- `talk.kakao.com:443` is reachable.
+
+Impact:
+
+- KakaoTalk may refuse to connect because it trusts macOS reachability before opening sockets.
+- This remains a completion blocker.
+
+Current handling:
+
+- `system` warns but keeps running.
+- `app-check` still fails until reachability reports reachable.
+
+### Blocker C: Packaging Not Yet Started
 
 Packaging should wait until:
 

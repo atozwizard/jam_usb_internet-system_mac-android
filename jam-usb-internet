@@ -1769,7 +1769,10 @@ install_manual_tun_routes() {
 
   info "Installing IPv4 split routes through ${tun_if}."
 
-  install_tun_default_route "$tun_if" || failed=1
+  if ! install_tun_default_route "$tun_if"; then
+    warn "Continuing without a verified default route; TCP/DNS may still work through split routes."
+    warn "Apps that rely on macOS reachability, especially KakaoTalk, may still report offline."
+  fi
 
   while IFS= read -r prefix; do
     [[ -z "$prefix" ]] && continue
@@ -1928,7 +1931,7 @@ system_command() {
     return 1
   fi
 
-  if ! basic_network_check; then
+  if ! basic_network_check system; then
     fail "System mode started, but app connectivity checks failed. Cleaning up."
     cleanup_system
     return 1
@@ -2008,6 +2011,7 @@ check_git_endpoint() {
 }
 
 basic_network_check() {
+  local mode="${1:-strict}"
   local failed=0
 
   if dig +time=3 +tries=1 example.com >/dev/null 2>&1 || nslookup example.com >/dev/null 2>&1; then
@@ -2022,7 +2026,13 @@ basic_network_check() {
   check_tcp_endpoint "Discord gateway" "gateway.discord.gg" 443 || failed=1
   check_https_endpoint "Kakao" "https://talk.kakao.com" || failed=1
   check_tcp_endpoint "Kakao" "talk.kakao.com" 443 || failed=1
-  check_reachability_endpoint "KakaoTalk" "talk.kakao.com" || failed=1
+  if ! check_reachability_endpoint "KakaoTalk" "talk.kakao.com"; then
+    if [[ "$mode" == "system" ]]; then
+      warn "Keeping system mode up because DNS/TCP checks passed; KakaoTalk reachability remains a blocker for app-check."
+    else
+      failed=1
+    fi
+  fi
   check_git_endpoint || failed=1
 
   return "$failed"

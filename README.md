@@ -129,7 +129,7 @@ If native USB tethering is blocked on your Mac, use `system --mobile-only` for M
 
 If `sing-box` prints `network: missing default interface`, the tool now keeps going: it waits for the TUN address, adds split IPv4 routes manually, and uses local DNS hijacking so disconnected Wi-Fi does not have to provide DNS.
 
-Safety note: full system mode now fails closed. It starts `sing-box`, verifies that `127.0.0.1` can answer DNS, verifies that macOS is using the temporary resolver, and verifies the TUN route before app checks. If any step fails, it stops and leaves Wi-Fi DNS untouched.
+Safety note: full system mode fails closed for relay, DNS, and split-route failures. It starts `sing-box`, verifies that `127.0.0.1` can answer DNS, verifies that macOS is using the temporary resolver, and verifies the TUN split route before startup checks. A temporary default-route verification failure is allowed as a warning because split routes can still carry Chrome, Discord, git, and general TCP/DNS traffic. KakaoTalk reachability remains a strict completion check in `app-check`.
 
 Priority rule: Mac Wi-Fi wins. USB TUN is a fallback for when the Mac itself has no working internet. Use `--force-tun` only for deliberate USB-path testing.
 

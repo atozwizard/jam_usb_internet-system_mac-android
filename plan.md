@@ -238,7 +238,12 @@ Make Mac-wide TCP/DNS traffic flow through Android relay.
 8. Attempts temporary default route.
 9. Verifies route to `1.1.1.1`.
 10. Installs temporary DNS resolver.
-11. Runs `app-check`.
+11. Runs a startup connectivity check.
+
+Important distinction:
+
+- `system` startup must keep a usable TCP/DNS tunnel alive when Chrome, Discord, and git checks pass.
+- `app-check` remains the strict completion check and includes KakaoTalk/macOS reachability.
 
 ### 7.4 Current Block
 
@@ -252,7 +257,7 @@ Galaxy Wi-Fi: connected
 Observed:
 
 ```text
-[warn] Temporary default route verification failed for utun4.
+[warn] Temporary default route verification failed for utun4: route: writing to routing socket: not in table
 [ok] IPv4 route verification passed through utun4.
 ```
 
@@ -261,10 +266,11 @@ Interpretation:
 - Split routes can send real traffic through TUN.
 - macOS default route / reachability path does not verify against `utun4`.
 - KakaoTalk likely remains offline because reachability does not see the path as online.
+- The previous startup logic was too strict because it cleaned up after a default-route warning even when split-route TCP/DNS could still work.
 
 ### 7.5 Current Patch
 
-Default route installation changed from:
+Default route installation had already changed from:
 
 ```zsh
 route change default -interface "$tun_if"
@@ -284,6 +290,18 @@ with:
 TUN_GATEWAY=172.19.0.1
 ```
 
+Latest behavior change:
+
+- Default route verification failure is warning-only during `system` startup.
+- Split route verification is still mandatory.
+- DNS, Chrome/web, Discord, and git checks are still mandatory.
+- KakaoTalk/macOS reachability is nonfatal during `system` startup but remains fatal in `app-check`.
+
+Purpose:
+
+- Keep the already-working USB TCP/DNS tunnel alive for real use and further diagnosis.
+- Avoid throwing away Chrome/Discord/git connectivity because one reachability layer is incomplete.
+
 ### 7.6 Next Validation
 
 Test with Mac Wi-Fi off and Galaxy Wi-Fi connected:
@@ -295,7 +313,11 @@ Test with Mac Wi-Fi off and Galaxy Wi-Fi connected:
 Expected:
 
 ```text
-[ok] Installed temporary default route through utunX for macOS app reachability.
+[ok] IPv4 route verification passed through utunX.
+[ok] DNS works through current macOS resolver.
+[ok] Chrome/web HTTPS reachable
+[ok] Discord gateway API HTTPS reachable
+[ok] git over HTTPS reachable
 ```
 
 Then:
@@ -310,6 +332,8 @@ Expected:
 [ok] KakaoTalk macOS reachability: talk.kakao.com (Reachable)
 ```
 
+If `system` stays up but `app-check` fails only at KakaoTalk reachability, the next task is route/reachability repair rather than Android relay repair.
+
 ## 8. Stage 5: Route, DNS, and Reachability Reliability
 
 ### 8.1 Route Work
@@ -321,6 +345,7 @@ Current plan:
 - Keep split public IPv4 routes for actual traffic coverage.
 - Restore previous default route on stop/recover.
 - Add diagnostic output when verification fails.
+- Do not stop system mode solely because default route verification failed, if split routes and DNS/TCP checks pass.
 
 ### 8.2 DNS Work
 
@@ -355,6 +380,8 @@ Current plan:
   ```
 
   to return reachable.
+- System startup uses reachability as a warning, not a teardown trigger.
+- `app-check` uses reachability as a completion gate.
 
 ### 8.4 Remaining Work
 
@@ -467,12 +494,13 @@ app-check passes.
 In Mac Wi-Fi-off target state:
 
 ```text
-system mode currently fails before final app-check because default route verification fails.
+relay checks pass; TUN starts; split routes pass; default route verification can fail.
 ```
 
 ### 10.4 Remaining Work
 
-- Re-test after gateway-based default route patch.
+- Re-test after nonfatal default route patch.
+- Confirm system mode remains running when default route verification fails but split routes pass.
 - Confirm KakaoTalk app itself can send/receive.
 - Confirm Discord text/API path.
 - Defer Discord voice/video until UDP strategy exists.
@@ -589,14 +617,34 @@ Push status:
 main tracks origin/main
 ```
 
+### 12.5 Author Identity
+
+GitHub repository ownership and Git commit authorship are separate.
+
+Local Git config is now:
+
+```text
+user.name=atozwizard
+user.email=251137756+atozwizard@users.noreply.github.com
+```
+
+Existing local commits were rewritten so both author and committer use that identity.
+
+Required publish step after the rewrite:
+
+```zsh
+git push --force-with-lease origin main
+```
+
 ## 13. Current Immediate Work Queue
 
 ### 13.1 Code
 
-1. Patch default route installation to use `172.19.0.1`.
+1. Keep default route installation as gateway `172.19.0.1`.
 2. Keep previous default route backup/restore.
-3. Improve diagnostics when default route verification fails.
-4. Verify syntax and config.
+3. Treat default route verification failure as warning-only during `system` startup.
+4. Keep KakaoTalk reachability strict in `app-check`.
+5. Verify syntax and config.
 
 ### 13.2 Docs
 
@@ -607,11 +655,10 @@ main tracks origin/main
 
 ### 13.3 Git
 
-1. Initialize git repository.
-2. Add `.gitignore`.
-3. Commit current project.
-4. Create GitHub repo.
-5. Push.
+1. Keep local author identity as `atozwizard`.
+2. Commit latest route/reachability behavior patch.
+3. Force-push rewritten author history safely with `--force-with-lease`.
+4. Verify remote repository metadata.
 
 ### 13.4 User Validation
 
