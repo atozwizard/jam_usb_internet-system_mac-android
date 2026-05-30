@@ -48,6 +48,7 @@ pkg/dist/jam-usb-internet-<version>.zip.sha256
   - `docs/GALAXY_SETUP.md`
   - `docs/MAC_SETUP.md`
   - `docs/USAGE.md`
+  - `docs/PREINSTALL_SECURITY_REVIEW.md`
   - `docs/RELEASE_CHECKLIST.md`
   - `docs/reference/`
 
@@ -73,4 +74,3 @@ pkg/build-dist.sh
 - menu bar on/off/recover
 - status indicator
 - optional signed/notarized `.pkg` installer
-

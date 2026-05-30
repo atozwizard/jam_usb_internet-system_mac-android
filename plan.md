@@ -591,9 +591,26 @@ Implemented portable distribution workspace:
 - `pkg/GALAXY_SETUP.md`
 - `pkg/MAC_SETUP.md`
 - `pkg/USAGE.md`
+- `pkg/PREINSTALL_SECURITY_REVIEW.md`
 - `pkg/RELEASE_CHECKLIST.md`
 - `pkg/build-dist.sh`
 - generated local artifact under `pkg/dist/`
+
+Dependency/security policy:
+
+- Required runtime installs:
+
+  ```zsh
+  brew install --cask android-platform-tools
+  brew install sing-box
+  ```
+
+- Explicitly not required:
+  - Android File Transfer
+  - RNDIS driver
+  - Recovery Reduced Security
+  - SIP off
+  - Gatekeeper off
 
 Compatibility:
 
@@ -733,7 +750,8 @@ Remote `main` now points to the rewritten author history.
 2. Keep `plan.md` current with milestone state and future work.
 3. Update README with on/off/recover usage.
 4. Keep `pkg/` setup docs current for Note 9, Fold, and Apple Silicon Mac.
-5. Keep session logs appended as work continues.
+5. Keep preinstall/security policy current as dependencies change.
+6. Keep session logs appended as work continues.
 
 ### 13.3 Git
 

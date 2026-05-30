@@ -9,6 +9,23 @@ git status --short
 
 작업 중 변경이 있으면 먼저 의도한 변경인지 확인한다.
 
+## Dependency Policy
+
+Runtime required:
+
+```zsh
+brew install --cask android-platform-tools
+brew install sing-box
+```
+
+Runtime not required:
+
+- Android File Transfer
+- Reduced Security
+- SIP off
+- Gatekeeper off
+- RNDIS driver
+
 ## Static Checks
 
 ```zsh
@@ -74,4 +91,3 @@ pkg/dist/jam-usb-internet-<version>.zip.sha256
 - LTE/Wi-Fi switching on the Galaxy during an active session can terminate the tunnel.
 - Discord voice/video is not covered by the current TCP/DNS milestone.
 - Native Android USB tethering remains non-primary on Mac.
-

@@ -1171,6 +1171,82 @@ pkg/dist/jam-usb-internet-0.4.3.zip.sha256
 
 The generated zip is not tracked in git and should be attached to a GitHub Release when a public/private release artifact is needed.
 
+### Session 17: 2026-05-30 Preinstall and Security Review
+
+User request:
+
+```text
+brew로 설치해야 할 라이브러리,
+AndroidFileTransfer.dmg 필요 여부,
+안전모드/보안등급 하향 필요 여부,
+Note 9/Fold 개발자모드 사용법을 공식문서 기준으로 꼼꼼히 검토
+```
+
+Review result:
+
+- Required runtime dependencies:
+
+  ```zsh
+  brew install --cask android-platform-tools
+  brew install sing-box
+  ```
+
+- Not required:
+
+  ```text
+  /Users/twentyflags/twentyflags/tools/AndroidFileTransfer.dmg
+  Android File Transfer
+  RNDIS driver
+  macOS Recovery Reduced Security
+  SIP off
+  Gatekeeper off
+  ```
+
+Reasoning:
+
+- The package uses ADB, not Android File Transfer.
+- The Android relay is uploaded through `adb push`.
+- Native Android USB tethering/RNDIS is not the project baseline on Mac.
+- The package does not install a kernel extension or system extension.
+- Mac-side privileged work is limited to temporary route/DNS/TUN operations through existing macOS mechanisms.
+
+Docs added/updated:
+
+- Added:
+
+  ```text
+  pkg/PREINSTALL_SECURITY_REVIEW.md
+  ```
+
+- Updated:
+
+  ```text
+  pkg/MAC_SETUP.md
+  pkg/GALAXY_SETUP.md
+  pkg/USAGE.md
+  pkg/README.md
+  pkg/RELEASE_CHECKLIST.md
+  README.md
+  ```
+
+- Updated `jam-usb-internet` user-facing install hints from:
+
+  ```zsh
+  brew install android-platform-tools
+  ```
+
+  to:
+
+  ```zsh
+  brew install --cask android-platform-tools
+  ```
+
+Version:
+
+```text
+0.4.4
+```
+
 ## 10. Current Known State
 
 Known working:
@@ -1193,6 +1269,7 @@ Known working:
 - Mac Wi-Fi connected + Galaxy disconnected: normal Mac internet works after `system-stop`.
 - Manual `system-recover` restores normal Mac internet after forced terminal close.
 - Portable distribution packaging exists under `pkg/`.
+- Preinstall/security review is documented under `pkg/PREINSTALL_SECURITY_REVIEW.md`.
 
 Known failing:
 

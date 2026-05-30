@@ -43,6 +43,12 @@ Mac <-> USB/ADB <-> Galaxy relay <-> Galaxy Wi-Fi 또는 LTE <-> Internet
 4. Mac과 USB로 연결한다.
 5. phone 화면에 `Allow USB debugging?`가 뜨면 허용한다.
 
+문제가 생기면:
+
+- `adb devices`가 `unauthorized`이면 Galaxy 화면을 켜고 USB debugging 허용 창을 확인한다.
+- 허용 창이 안 뜨면 USB를 뽑았다가 다시 연결한다.
+- `Developer options -> Revoke USB debugging authorizations`를 실행한 뒤 다시 연결하면 authorization prompt가 다시 뜰 수 있다.
+
 ## 3. Galaxy Fold / Z Fold 개발자 옵션 켜기
 
 Fold 계열도 원리는 같다.
@@ -55,6 +61,12 @@ Fold 계열도 원리는 같다.
 6. Mac 연결 후 ADB authorization prompt를 허용한다.
 
 모델과 One UI 버전에 따라 메뉴 이름은 약간 다를 수 있지만 핵심은 `Software information -> Build number -> Developer options -> USB debugging`이다.
+
+Fold 계열에서 추가로 확인할 것:
+
+- 접힌 상태/펼친 상태와 무관하게 USB debugging prompt는 현재 켜진 화면에 뜬다.
+- 화면 잠금 상태에서는 ADB authorization prompt를 놓칠 수 있으므로 반드시 잠금을 해제한다.
+- 처음 연결한 Mac이면 RSA fingerprint 확인 창에서 `Always allow from this computer`를 선택할 수 있다.
 
 ## 4. USB 연결 모드
 
@@ -74,6 +86,8 @@ Charge only
 ```
 
 왜냐하면 현재 프로젝트는 macOS가 Android USB LAN을 인식하는 방식이 아니라, 파일전송/MTP 모드에서 살아있는 ADB 연결을 사용하기 때문이다.
+
+`USB tethering`은 이 프로젝트의 기본 경로가 아니다. Google Android Help 기준으로 Mac은 Android와 USB tethering을 할 수 없다고 안내되어 있으므로, Mac에서 Galaxy를 USB LAN처럼 인식시키는 방식은 기본 성공 조건으로 두지 않는다.
 
 ## 5. Galaxy 인터넷 상태
 
@@ -107,7 +121,7 @@ adb shell getprop ro.product.cpu.abilist
 ## 7. 공식 문서 기준
 
 - Android ADB: https://developer.android.com/tools/adb
+- Android developer options: https://developer.android.com/studio/debug/dev-options
 - Android tethering help: https://support.google.com/android/answer/9059108
 - Samsung USB options: https://www.samsung.com/us/support/answer/ANS10002546/
 - Android ABI: https://developer.android.com/ndk/guides/abis
-

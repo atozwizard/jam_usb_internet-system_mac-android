@@ -73,10 +73,39 @@ Use `--mobile-only` with `system` only when you intentionally want the Galaxy to
 If ADB is missing on the Mac:
 
 ```zsh
-brew install android-platform-tools
+brew install --cask android-platform-tools
 ```
 
 After installing ADB, connect the phone, unlock it, and accept the USB debugging authorization prompt.
+
+## Preinstall and Security Requirements
+
+Required Homebrew installs:
+
+```zsh
+brew install --cask android-platform-tools
+brew install sing-box
+```
+
+Not required:
+
+- `AndroidFileTransfer.dmg`
+- RNDIS drivers
+- Reduced Security in macOS Recovery
+- disabling SIP
+- disabling Gatekeeper
+
+`AndroidFileTransfer.dmg` can be useful only for manually browsing phone files through MTP. This package uploads its relay with `adb push`, so Android File Transfer is not part of the runtime path.
+
+Apple Silicon Macs may ask you to allow a new USB/Thunderbolt accessory. Approve that prompt or check `System Settings -> Privacy & Security -> Allow accessories to connect`.
+
+See:
+
+```text
+pkg/MAC_SETUP.md
+pkg/GALAXY_SETUP.md
+pkg/PREINSTALL_SECURITY_REVIEW.md
+```
 
 ## Commands
 
@@ -195,6 +224,7 @@ The generated zip includes:
 - ON / OFF / RECOVER `.command` launchers
 - Galaxy setup guide for Note 9 and Fold
 - Mac setup guide for Apple Silicon / M3 Pro security prompts
+- preinstall/security review for Homebrew dependencies, Android File Transfer, and macOS security policy
 - usage guide and release checklist
 - Android relay binary and sing-box config template
 

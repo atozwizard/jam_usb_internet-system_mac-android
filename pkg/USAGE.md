@@ -2,24 +2,33 @@
 
 ## 1. 가장 안전한 사용 흐름
 
+0. 처음 한 번 Mac에 의존성을 설치한다.
+
+```zsh
+brew install --cask android-platform-tools
+brew install sing-box
+```
+
 1. Galaxy에서 Wi-Fi 또는 LTE를 켠다.
-2. Galaxy를 Mac에 USB 데이터 케이블로 연결한다.
-3. Galaxy USB 모드를 `File Transfer / Android Auto`로 둔다.
-4. Galaxy 화면에서 USB debugging 허용을 확인한다.
-5. Mac에서 다음 파일을 실행한다.
+2. Galaxy 개발자 옵션과 USB debugging을 켠다.
+3. Galaxy를 Mac에 USB 데이터 케이블로 연결한다.
+4. Mac에서 새 USB accessory 허용 창이 뜨면 허용한다.
+5. Galaxy USB 모드를 `File Transfer / Android Auto`로 둔다.
+6. Galaxy 화면에서 USB debugging 허용을 확인한다.
+7. Mac에서 다음 파일을 실행한다.
 
 ```text
 Galaxy USB Internet ON.command
 ```
 
-6. 사용 중에는 열린 Terminal 창을 닫지 않는다.
-7. 끝낼 때는 다음 파일을 실행한다.
+8. 사용 중에는 열린 Terminal 창을 닫지 않는다.
+9. 끝낼 때는 다음 파일을 실행한다.
 
 ```text
 Galaxy USB Internet OFF.command
 ```
 
-8. 인터넷이 꼬였거나 창을 강제로 닫았다면 다음 파일을 실행한다.
+10. 인터넷이 꼬였거나 창을 강제로 닫았다면 다음 파일을 실행한다.
 
 ```text
 Galaxy USB Internet RECOVER.command
@@ -117,3 +126,14 @@ Galaxy LTE만 강제로 쓰고 싶을 때:
 
 `--mobile-only`는 phone Wi-Fi를 끄고 mobile data를 켜도록 Android에 요청한다. Galaxy 네트워크를 직접 바꾸는 일이므로 필요할 때만 쓴다.
 
+## 7. 설치하지 않아도 되는 것
+
+다음은 기본 사용에 필요 없다.
+
+- `/Users/twentyflags/twentyflags/tools/AndroidFileTransfer.dmg`
+- RNDIS 드라이버
+- Recovery mode의 Reduced Security
+- SIP 비활성화
+- Gatekeeper 비활성화
+
+필요한 것은 ADB와 sing-box다. Android File Transfer는 GUI 파일 전송용이고, 이 패키지는 `adb push`로 Android relay를 올린다.

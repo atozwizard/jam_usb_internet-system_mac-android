@@ -33,6 +33,7 @@ cp "$PKG_DIR/README.md" "$BUNDLE_DIR/README_PACKAGE.md"
 cp "$PKG_DIR/GALAXY_SETUP.md" "$BUNDLE_DIR/docs/GALAXY_SETUP.md"
 cp "$PKG_DIR/MAC_SETUP.md" "$BUNDLE_DIR/docs/MAC_SETUP.md"
 cp "$PKG_DIR/USAGE.md" "$BUNDLE_DIR/docs/USAGE.md"
+cp "$PKG_DIR/PREINSTALL_SECURITY_REVIEW.md" "$BUNDLE_DIR/docs/PREINSTALL_SECURITY_REVIEW.md"
 cp "$PKG_DIR/RELEASE_CHECKLIST.md" "$BUNDLE_DIR/docs/RELEASE_CHECKLIST.md"
 
 if [[ -d "$ROOT/reference" ]]; then
@@ -46,12 +47,16 @@ cat > "$BUNDLE_DIR/START_HERE.txt" <<EOF
 jam-usb-internet ${VERSION}
 
 1. Read docs/GALAXY_SETUP.md and docs/MAC_SETUP.md.
-2. Connect Galaxy by USB data cable.
-3. Set Galaxy USB mode to File Transfer / Android Auto.
-4. Authorize USB debugging.
-5. Double-click: Galaxy USB Internet ON.command
-6. Stop safely with: Galaxy USB Internet OFF.command
-7. If normal Mac internet does not recover, run: Galaxy USB Internet RECOVER.command
+2. Read docs/PREINSTALL_SECURITY_REVIEW.md.
+3. Install only required dependencies: android-platform-tools and sing-box.
+4. Do not install Android File Transfer for this tool unless you separately need GUI file browsing.
+5. Do not lower macOS security policy, disable SIP, or install RNDIS drivers.
+6. Connect Galaxy by USB data cable.
+7. Set Galaxy USB mode to File Transfer / Android Auto.
+8. Authorize USB debugging.
+9. Double-click: Galaxy USB Internet ON.command
+10. Stop safely with: Galaxy USB Internet OFF.command
+11. If normal Mac internet does not recover, run: Galaxy USB Internet RECOVER.command
 
 Current milestone: TCP/DNS internet for Chrome, Discord text/API, KakaoTalk, and git.
 Known limits: forced terminal close may need RECOVER; Discord voice/video UDP is not covered.

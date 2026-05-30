@@ -10,7 +10,7 @@
 set -u
 
 APP_NAME="jam-usb-internet"
-VERSION="0.4.3"
+VERSION="0.4.4"
 SCRIPT_DIR="${0:a:h}"
 STATE_DIR="${JAM_USB_STATE_DIR:-${HOME}/.jam-usb-internet}"
 ORDER_BACKUP="${STATE_DIR}/network-services.before"
@@ -402,7 +402,7 @@ android_summary() {
 
 ensure_adb_device_or_fail() {
   if ! start_adb_if_available; then
-    fail "ADB is required. Install with: brew install android-platform-tools"
+    fail "ADB is required. Install with: brew install --cask android-platform-tools"
     return 1
   fi
 
@@ -871,7 +871,7 @@ connect_command() {
     fi
   else
     warn "ADB is not available. Manual phone-side setup is required."
-    warn "Install later with: brew install android-platform-tools"
+    warn "Install later with: brew install --cask android-platform-tools"
   fi
 
   info "If the phone screen is open, enable: Settings > Connections > Mobile Hotspot and Tethering > USB tethering."
@@ -1240,7 +1240,7 @@ proxy_command() {
   ensure_state_dir
 
   if ! start_adb_if_available; then
-    fail "ADB is required for proxy mode. Install with: brew install android-platform-tools"
+    fail "ADB is required for proxy mode. Install with: brew install --cask android-platform-tools"
     return 1
   fi
 
@@ -1329,7 +1329,7 @@ browser_command() {
   SYSTEM_PROXY=0
 
   if ! start_adb_if_available; then
-    fail "ADB is required for browser mode. Install with: brew install android-platform-tools"
+    fail "ADB is required for browser mode. Install with: brew install --cask android-platform-tools"
     return 1
   fi
 
@@ -2479,7 +2479,7 @@ doctor_command() {
   if adb_path="$(find_adb)"; then
     ok "ADB found: $adb_path"
   else
-    warn "ADB not found. Install with: brew install android-platform-tools"
+    warn "ADB not found. Install with: brew install --cask android-platform-tools"
   fi
 
   if [[ "$arch" == "arm64" ]]; then
