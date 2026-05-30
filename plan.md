@@ -451,6 +451,7 @@ Current implementation:
 - The guard monitors the main system-mode process.
 - Normal shutdown writes an explicit disarm token.
 - If the main process disappears without that matching disarm token, the guard runs recovery cleanup automatically.
+- After abnormal exit, the guard repeats route/DNS/proxy repair and internet verification for up to about two minutes.
 - The guard removes its own launchd label before exit to avoid restart loops.
 - Startup removes stale guard jobs before launching a new guard.
 - Cleanup also repairs stale local SOCKS proxies when they point to this tool's local ports.
@@ -461,7 +462,8 @@ Current validation state:
 - Unit-style disarm test passed with a temporary state directory.
 - First field validation with the original guard failed.
 - Second local unit test with explicit disarm token passed.
-- Field validation is still needed with the explicit-disarm launchctl guard.
+- Field validation showed the guard runs cleanup, but one pass is not enough when Wi-Fi reconnects later.
+- Field validation is still needed with repeated cleanup enabled.
 
 ### 9.4 Documentation
 
@@ -479,7 +481,7 @@ and fallback:
 
 ### 9.5 Remaining Work
 
-- Field-test forced terminal close with explicit-disarm guard enabled.
+- Field-test forced terminal close with repeated cleanup guard enabled.
 - Add on/off `.command` naming once behavior is stable.
 - Make command windows less scary for non-technical use.
 
@@ -754,6 +756,7 @@ Expected:
 
 - Force-closing the system-mode terminal triggers cleanup guard.
 - Normal Mac Wi-Fi works after reconnecting Wi-Fi.
+- The guard may take 10-120 seconds after Wi-Fi reconnects to verify normal internet.
 - If guard fails, `system-recover` must restore normal internet.
 
 ### 14.5 Phone Internet Off, Mac Wi-Fi Connected

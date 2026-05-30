@@ -907,6 +907,59 @@ Remaining field test:
 - Real Terminal forced close with the explicit-disarm guard.
 - Galaxy LTE KakaoTalk diagnosis with `app-check` and `system-status`.
 
+### Session 13: 2026-05-30 Guard Ran Once But Wi-Fi Recovery Still Needed Manual Recover
+
+User validation:
+
+```text
+Force-close system-mode terminal
+Connect Mac Wi-Fi
+KakaoTalk works
+Other internet fails
+Run system-recover
+Other internet recovers
+```
+
+Guard evidence:
+
+```text
+[warn] System session exited without disarming cleanup guard; recovering normal networking.
+[ok] Cleanup guard finished.
+```
+
+System status after manual recovery:
+
+- No `sing-box` process.
+- No temporary DNS resolver.
+- No cleanup guard session.
+- Route to `1.1.1.1` goes through normal Wi-Fi gateway `192.168.55.1`.
+
+Interpretation:
+
+- The guard now detects abnormal exit and runs cleanup.
+- The remaining failure is timing: guard cleanup can finish while Mac Wi-Fi is still off or reconnecting.
+- Later Wi-Fi connection may still require a second cleanup pass, which manual `system-recover` provides.
+
+Patch applied:
+
+- Added repeated guard recovery loop.
+- After abnormal exit, guard now repeats route/DNS/proxy cleanup and internet verification for up to about two minutes.
+- The loop is intended to catch delayed Mac Wi-Fi reconnection after Terminal has already closed.
+- Manual `system-recover` uses a shorter repeated repair so it remains responsive.
+- Stale TUN default route deletion was strengthened when the gateway is `172.19.0.1`.
+
+Next validation:
+
+- Force-close system mode.
+- Turn on/connect Mac Wi-Fi.
+- Wait 10-20 seconds first, then test internet.
+- If still broken, wait up to 2 minutes once before running `system-recover`, so the repeated guard loop can be observed.
+- Check:
+
+  ```zsh
+  tail -120 ~/.jam-usb-internet/system-guard.log
+  ```
+
 ## 10. Current Known State
 
 Known working:
@@ -953,6 +1006,7 @@ Current patch:
 - Launch cleanup guard for abnormal system-mode exits through `sudo launchctl submit`.
 - Require an explicit disarm token before treating guard exit as normal.
 - Remove stale guard launchd labels before starting a new guard.
+- Repeat route/DNS/proxy repair after abnormal exit so delayed Wi-Fi reconnects are handled.
 - Make guard refuse to start system mode if it cannot be launched.
 - Disarm guard only after normal cleanup is complete.
 - Make preclean restore route state before stopping old TUN engine.

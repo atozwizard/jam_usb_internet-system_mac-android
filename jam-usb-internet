@@ -1830,15 +1830,8 @@ system_guard_command() {
   fi
 
   warn "System session exited without disarming cleanup guard; recovering normal networking."
-  delete_manual_tun_routes
-  disable_dynamic_local_dns
-  if ! restore_system_dns; then
-    warn "DNS restore failed in cleanup guard. Run './jam-usb-internet system-recover' after reopening Terminal."
-  fi
-  repair_stale_local_socks_proxy
-  stop_sing_box_processes
-  relay_stop_command || true
-  dscacheutil -flushcache >/dev/null 2>&1 || true
+  system_local_cleanup_once remote
+  guard_recovery_watch
   rm -f "$SYSTEM_SESSION_FILE" "$SYSTEM_GUARD_PID_FILE" "$SYSTEM_GUARD_DISARM_FILE" "$SYSTEM_GUARD_LABEL_FILE"
   ok "Cleanup guard finished."
   remove_guard_launchctl_label "$label"
@@ -2016,7 +2009,7 @@ install_manual_tun_routes() {
 }
 
 delete_manual_tun_routes() {
-  local prefix tun_if
+  local prefix tun_if default_route
 
   tun_if="$(current_tun_interface)"
   restore_default_route "$tun_if" || true
@@ -2028,6 +2021,62 @@ delete_manual_tun_routes() {
     fi
     sudo -n route -n delete -net "$prefix" >/dev/null 2>&1 || true
   done < <(manual_route_prefixes)
+
+  default_route="$(route -n get default 2>/dev/null || true)"
+  if print -r -- "$default_route" | grep -q "gateway: ${TUN_GATEWAY}"; then
+    sudo -n route -n delete default "$TUN_GATEWAY" >/dev/null 2>&1 || true
+    sudo -n route -n delete default >/dev/null 2>&1 || true
+  fi
+}
+
+system_local_cleanup_once() {
+  local include_remote="${1:-remote}"
+
+  delete_manual_tun_routes
+  disable_dynamic_local_dns
+  if ! restore_system_dns; then
+    warn "DNS restore failed during cleanup; stale local DNS repair was attempted."
+  fi
+  repair_stale_local_socks_proxy
+  stop_sing_box_processes
+  if [[ "$include_remote" == "remote" ]]; then
+    relay_stop_command || true
+    proxy_stop_command || true
+  fi
+  dscacheutil -flushcache >/dev/null 2>&1 || true
+}
+
+normal_network_state_is_clean() {
+  if dns_servers_are_local_only "$(dns_servers_for_service Wi-Fi)"; then
+    return 1
+  fi
+  if scutil --dns 2>/dev/null | grep -Eq 'nameserver\[[0-9]+\] : 127\.0\.0\.1'; then
+    return 1
+  fi
+  if netstat -rn -f inet | awk '$1 == "1" || $1 == "1.0.0.0/8" || $1 == "128.0/1" {print}' | grep -q "$TUN_GATEWAY"; then
+    return 1
+  fi
+  if route -n get default 2>/dev/null | grep -q "gateway: ${TUN_GATEWAY}"; then
+    return 1
+  fi
+  return 0
+}
+
+guard_recovery_watch() {
+  local attempts="${1:-24}"
+  local delay="${2:-5}"
+  local i
+
+  for (( i = 1; i <= attempts; i++ )); do
+    system_local_cleanup_once local
+    if normal_network_state_is_clean && quick_internet_check; then
+      ok "Cleanup guard verified normal internet after ${i} recovery pass(es)."
+      return 0
+    fi
+    sleep "$delay"
+  done
+
+  warn "Cleanup guard finished repeated repair, but normal internet was not verified."
 }
 
 system_command() {
@@ -2100,14 +2149,7 @@ system_command() {
   cleanup_system() {
     (( cleaned_up )) && return 0
     cleaned_up=1
-    delete_manual_tun_routes
-    disable_dynamic_local_dns
-    if ! restore_system_dns; then
-      warn "DNS restore failed during cleanup. Run './jam-usb-internet system-stop' and verify Wi-Fi DNS."
-    fi
-    repair_stale_local_socks_proxy
-    stop_sing_box_processes
-    relay_stop_command || true
+    system_local_cleanup_once remote
     rm -f "$SING_BOX_PID_FILE"
     disarm_system_guard
   }
@@ -2180,12 +2222,7 @@ system_stop_command() {
   say ""
   require_macos
   ensure_admin_if_interactive >/dev/null 2>&1 || true
-  delete_manual_tun_routes
-  disable_dynamic_local_dns
-  restore_system_dns || warn "DNS restore reported a problem. Try: ./jam-usb-internet system-recover"
-  repair_stale_local_socks_proxy
-  stop_sing_box_processes
-  relay_stop_command || true
+  system_local_cleanup_once remote
   disarm_system_guard
   ok "System mode stop requested."
 }
@@ -2279,25 +2316,13 @@ system_recover_command() {
 
   info "Recovering normal Mac networking."
   ensure_admin_if_interactive >/dev/null 2>&1 || true
-  delete_manual_tun_routes
-  disable_dynamic_local_dns
-  if ! restore_system_dns; then
-    warn "DNS restore from backup failed; stale local DNS repair was attempted."
-  fi
-  repair_stale_local_socks_proxy
-  stop_sing_box_processes
-  relay_stop_command || true
-  proxy_stop_command || true
+  system_local_cleanup_once remote
   disarm_system_guard
-  dscacheutil -flushcache >/dev/null 2>&1 || true
+  guard_recovery_watch 3 2
 
   say ""
-  if dns_servers_are_local_only "$(dns_servers_for_service Wi-Fi)"; then
-    fail "Recovery failed: Wi-Fi DNS is still local-only."
-    return 1
-  fi
-  if netstat -rn -f inet | awk '$1 == "1" || $1 == "1.0.0.0/8" || $1 == "128.0/1" {print}' | grep -q "$TUN_GATEWAY"; then
-    fail "Recovery failed: TUN split routes are still present."
+  if ! normal_network_state_is_clean; then
+    fail "Recovery failed: stale DNS/routes are still present."
     return 1
   fi
   if quick_internet_check; then
