@@ -1,0 +1,83 @@
+{
+  "log": {
+    "level": "info"
+  },
+  "dns": {
+    "strategy": "ipv4_only",
+    "servers": [
+      {
+        "type": "https",
+        "tag": "cloudflare",
+        "server": "1.1.1.1",
+        "server_port": 443,
+        "path": "/dns-query",
+        "detour": "phone-socks"
+      }
+    ],
+    "final": "cloudflare"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "address": [
+        "172.19.0.1/30"
+      ],
+      "auto_route": true,
+      "strict_route": false
+    },
+    {
+      "type": "direct",
+      "tag": "dns-in-udp",
+      "listen": "127.0.0.1",
+      "listen_port": 53,
+      "network": "udp",
+      "override_address": "1.1.1.1",
+      "override_port": 53
+    },
+    {
+      "type": "direct",
+      "tag": "dns-in-tcp",
+      "listen": "127.0.0.1",
+      "listen_port": 53,
+      "network": "tcp",
+      "override_address": "1.1.1.1",
+      "override_port": 53
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "socks",
+      "tag": "phone-socks",
+      "server": "127.0.0.1",
+      "server_port": 18080,
+      "version": "5"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "inbound": [
+          "dns-in-udp",
+          "dns-in-tcp"
+        ],
+        "action": "hijack-dns"
+      },
+      {
+        "protocol": "dns",
+        "action": "hijack-dns"
+      },
+      {
+        "network": "udp",
+        "action": "reject",
+        "method": "default",
+        "no_drop": true
+      }
+    ],
+    "final": "phone-socks"
+  }
+}

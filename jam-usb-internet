@@ -1,0 +1,2306 @@
+#!/bin/zsh
+#
+# jam-usb-internet
+# Mac + Android USB internet helper for situations where Wi-Fi/Bluetooth are not usable.
+#
+# Preferred path: keep ADB alive in File Transfer mode, run an Android relay,
+# and route Mac traffic through a local TUN engine. Native USB tethering remains
+# available as an explicit compatibility experiment through `connect`.
+
+set -u
+
+APP_NAME="jam-usb-internet"
+VERSION="0.4.1"
+SCRIPT_DIR="${0:a:h}"
+STATE_DIR="${HOME}/.jam-usb-internet"
+ORDER_BACKUP="${STATE_DIR}/network-services.before"
+SOCKS_BACKUP="${STATE_DIR}/socks-proxy.before"
+DNS_BACKUP="${STATE_DIR}/dns-servers.before"
+DEFAULT_ROUTE_BACKUP="${STATE_DIR}/default-route.before"
+PROXY_PID_FILE="${STATE_DIR}/adb-socks.pid"
+RELAY_REMOTE_PATH="/data/local/tmp/knock-relay"
+RELAY_REMOTE_LOG="/data/local/tmp/knock-relay.log"
+RELAY_MAC_PORT=18080
+RELAY_DEVICE_PORT=18080
+SING_BOX_CONFIG="${STATE_DIR}/sing-box.system.json"
+SING_BOX_PID_FILE="${STATE_DIR}/sing-box.pid"
+TUN_GATEWAY="172.19.0.1"
+DYNAMIC_DNS_KEY="State:/Network/Service/jam-usb-internet/DNS"
+
+COMMAND="connect"
+TIMEOUT=45
+USE_ADB=1
+OPEN_SETTINGS=1
+MOBILE_ONLY=0
+PREFER_TETHER=1
+AGGRESSIVE_ANDROID=0
+VERBOSE=0
+FALLBACK_PROXY=0
+SYSTEM_PROXY=1
+PROXY_HOST="127.0.0.1"
+PROXY_PORT=10808
+BROWSER_URL="https://example.com"
+CHECK_ONLY=0
+FORCE_TUN=0
+
+ADB_BIN=""
+ADB_SERIAL="${ANDROID_SERIAL:-}"
+
+if [[ -t 1 ]]; then
+  BOLD="$(tput bold 2>/dev/null || true)"
+  DIM="$(tput dim 2>/dev/null || true)"
+  RED="$(tput setaf 1 2>/dev/null || true)"
+  GREEN="$(tput setaf 2 2>/dev/null || true)"
+  YELLOW="$(tput setaf 3 2>/dev/null || true)"
+  BLUE="$(tput setaf 4 2>/dev/null || true)"
+  RESET="$(tput sgr0 2>/dev/null || true)"
+else
+  BOLD=""
+  DIM=""
+  RED=""
+  GREEN=""
+  YELLOW=""
+  BLUE=""
+  RESET=""
+fi
+
+say() { print -r -- "$*"; }
+info() { say "${BLUE}[info]${RESET} $*"; }
+ok() { say "${GREEN}[ok]${RESET} $*"; }
+warn() { say "${YELLOW}[warn]${RESET} $*"; }
+fail() { say "${RED}[fail]${RESET} $*"; }
+debug() { (( VERBOSE )) && say "${DIM}[debug] $*${RESET}"; }
+
+ensure_admin_if_interactive() {
+  if (( EUID == 0 )); then
+    return 0
+  fi
+  sudo -n true >/dev/null 2>&1 && return 0
+  if [[ -t 0 ]]; then
+    sudo -v
+    return $?
+  fi
+  return 1
+}
+
+usage() {
+  cat <<'EOF'
+jam-usb-internet
+
+MacBook + Android USB internet helper.
+
+Usage:
+  jam-usb-internet connect [options]
+  jam-usb-internet proxy [options]
+  jam-usb-internet browser [options]
+  jam-usb-internet relay-install
+  jam-usb-internet relay-start
+  jam-usb-internet relay-stop
+  jam-usb-internet relay-clean
+  jam-usb-internet system
+  jam-usb-internet system-stop
+  jam-usb-internet system-recover
+  jam-usb-internet system-status
+  jam-usb-internet app-check
+  jam-usb-internet proxy-stop
+  jam-usb-internet status
+  jam-usb-internet doctor
+  jam-usb-internet restore
+
+Common flow:
+  1. Connect Galaxy Note 9 to the Mac with a data-capable USB cable.
+  2. Unlock the phone.
+  3. Set USB mode to File Transfer / Android Auto.
+  4. Enable USB debugging once and authorize this Mac.
+  5. Keep Android USB tethering off for system mode.
+  6. Run: ./jam-usb-internet system
+
+Options:
+  --timeout SECONDS        Wait time for the macOS USB network interface. Default: 45
+  --no-adb                Do not use ADB; you will turn on USB tethering manually.
+  --no-open-settings      Do not open the Android tethering settings screen.
+  --mobile-only           Ask Android to enable mobile data and disable phone Wi-Fi.
+  --no-prefer             Do not move the USB tether network service to the top.
+  --aggressive-android    Try extra Android USB commands that may drop ADB.
+  --fallback-proxy        If native USB networking fails, start the ADB SOCKS proxy.
+  --port PORT             SOCKS proxy port for the proxy command. Default: 10808
+  --relay-port PORT       Mac/device relay port for system mode. Default: 18080
+  --relay-binary PATH     Relay binary to install instead of auto-detected path.
+  --check-only            Validate setup without starting privileged TUN mode.
+  --force-tun             Start USB TUN even if normal Mac internet already works.
+  --no-system-proxy       Do not change macOS system SOCKS proxy settings.
+  --url URL               URL to open with the browser command.
+  --verbose               Print command-level diagnostics.
+  -h, --help              Show this help.
+
+Commands:
+  connect                 Try to bring up USB internet. This is the default.
+  proxy                   Start an ADB SOCKS proxy over USB. Best for modern macOS.
+  browser                 Start the proxy and open a dedicated Chrome window through it.
+  relay-install           Stage 1: upload Android relay binary if available.
+  relay-start             Stage 1: start Android relay and ADB forward.
+  relay-stop              Stage 1: stop Android relay and remove ADB forward.
+  relay-clean             Stage 1: stop and remove Android relay.
+  system                  Mac-wide TUN mode.
+  system-stop             Stop Mac-wide TUN mode.
+  system-recover          Aggressively restore normal Mac networking.
+  system-status           Show whether Mac-wide TUN mode appears to be active.
+  app-check               Check Chrome/Discord/Kakao/git-style TCP connectivity.
+  proxy-stop              Turn off the macOS system SOCKS proxy set by this tool.
+  status                  Print current USB/network/ADB status.
+  doctor                  Check prerequisites and give next steps.
+  restore                 Restore the previous macOS network service order.
+
+Notes:
+  - If cellular data is blocked, the phone relay cannot create internet.
+  - On modern macOS, many Samsung/Android phones expose old RNDIS tethering,
+    which macOS may not show as a network interface without a compatible driver.
+EOF
+}
+
+parse_args() {
+  if (( $# > 0 )) && [[ "$1" != --* && "$1" != "-h" ]]; then
+    COMMAND="$1"
+    shift
+  fi
+
+  while (( $# > 0 )); do
+    case "$1" in
+      --timeout)
+        shift
+        if (( $# == 0 )); then
+          fail "--timeout needs a value."
+          exit 2
+        fi
+        TIMEOUT="$1"
+        ;;
+      --no-adb)
+        USE_ADB=0
+        ;;
+      --no-open-settings)
+        OPEN_SETTINGS=0
+        ;;
+      --mobile-only)
+        MOBILE_ONLY=1
+        ;;
+      --no-prefer)
+        PREFER_TETHER=0
+        ;;
+      --aggressive-android)
+        AGGRESSIVE_ANDROID=1
+        ;;
+      --fallback-proxy)
+        FALLBACK_PROXY=1
+        ;;
+      --port)
+        shift
+        if (( $# == 0 )); then
+          fail "--port needs a value."
+          exit 2
+        fi
+        PROXY_PORT="$1"
+        ;;
+      --relay-port)
+        shift
+        if (( $# == 0 )); then
+          fail "--relay-port needs a value."
+          exit 2
+        fi
+        RELAY_MAC_PORT="$1"
+        RELAY_DEVICE_PORT="$1"
+        ;;
+      --relay-binary)
+        shift
+        if (( $# == 0 )); then
+          fail "--relay-binary needs a value."
+          exit 2
+        fi
+        KNOCK_RELAY_BINARY="$1"
+        ;;
+      --check-only)
+        CHECK_ONLY=1
+        ;;
+      --force-tun)
+        FORCE_TUN=1
+        ;;
+      --no-system-proxy)
+        SYSTEM_PROXY=0
+        ;;
+      --url)
+        shift
+        if (( $# == 0 )); then
+          fail "--url needs a value."
+          exit 2
+        fi
+        BROWSER_URL="$1"
+        ;;
+      --verbose)
+        VERBOSE=1
+        ;;
+      -h|--help|help)
+        usage
+        exit 0
+        ;;
+      *)
+        fail "Unknown option: $1"
+        usage
+        exit 2
+        ;;
+    esac
+    shift
+  done
+}
+
+require_macos() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    fail "This utility is for macOS."
+    exit 1
+  fi
+}
+
+ensure_state_dir() {
+  mkdir -p "$STATE_DIR"
+}
+
+find_adb() {
+  local candidate
+
+  if command -v adb >/dev/null 2>&1; then
+    command -v adb
+    return 0
+  fi
+
+  for candidate in \
+    "${ANDROID_HOME:-}/platform-tools/adb" \
+    "${ANDROID_SDK_ROOT:-}/platform-tools/adb" \
+    "${HOME}/Library/Android/sdk/platform-tools/adb" \
+    "/opt/homebrew/bin/adb" \
+    "/usr/local/bin/adb"; do
+    if [[ -n "$candidate" && -x "$candidate" ]]; then
+      print -r -- "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+adb_cmd() {
+  if [[ -n "$ADB_SERIAL" ]]; then
+    "$ADB_BIN" -s "$ADB_SERIAL" "$@"
+  else
+    "$ADB_BIN" "$@"
+  fi
+}
+
+adb_shell() {
+  adb_cmd shell "$@"
+}
+
+start_adb_if_available() {
+  if (( ! USE_ADB )); then
+    return 1
+  fi
+
+  if ! ADB_BIN="$(find_adb)"; then
+    return 1
+  fi
+
+  debug "Using adb: $ADB_BIN"
+  "$ADB_BIN" start-server >/dev/null 2>&1 || true
+  return 0
+}
+
+wait_for_adb_device() {
+  local deadline=$(( SECONDS + TIMEOUT ))
+  local devices authorized unauthorized offline selected
+  local -a authorized_list unauthorized_list offline_list
+
+  while (( SECONDS < deadline )); do
+    devices="$("$ADB_BIN" devices 2>/dev/null | awk 'NR > 1 && NF >= 2 {print $1 "\t" $2}')"
+
+    authorized_list=("${(@f)$(print -r -- "$devices" | awk '$2 == "device" {print $1}')}")
+    unauthorized_list=("${(@f)$(print -r -- "$devices" | awk '$2 == "unauthorized" {print $1}')}")
+    offline_list=("${(@f)$(print -r -- "$devices" | awk '$2 == "offline" {print $1}')}")
+
+    if [[ -n "${ANDROID_SERIAL:-}" ]]; then
+      selected="$(print -r -- "$devices" | awk -v serial="$ANDROID_SERIAL" '$1 == serial && $2 == "device" {print $1; exit}')"
+      if [[ -n "$selected" ]]; then
+        ADB_SERIAL="$selected"
+        return 0
+      fi
+    elif (( ${#authorized_list[@]} > 0 )) && [[ -n "${authorized_list[1]}" ]]; then
+      ADB_SERIAL="${authorized_list[1]}"
+      if (( ${#authorized_list[@]} > 1 )); then
+        warn "Multiple Android devices found; using ${ADB_SERIAL}. Set ANDROID_SERIAL to choose."
+      fi
+      return 0
+    fi
+
+    if (( ${#unauthorized_list[@]} > 0 )) && [[ -n "${unauthorized_list[1]}" ]]; then
+      warn "Phone is connected but not authorized. Unlock it and tap 'Allow USB debugging'."
+    elif (( ${#offline_list[@]} > 0 )) && [[ -n "${offline_list[1]}" ]]; then
+      warn "Phone is visible to ADB but offline. Replug USB or toggle USB debugging."
+    else
+      debug "Waiting for an ADB device..."
+    fi
+    sleep 2
+  done
+
+  return 1
+}
+
+select_adb_device_now() {
+  local devices selected
+
+  devices="$("$ADB_BIN" devices 2>/dev/null | awk 'NR > 1 && NF >= 2 {print $1 "\t" $2}')"
+  if [[ -n "${ANDROID_SERIAL:-}" ]]; then
+    selected="$(print -r -- "$devices" | awk -v serial="$ANDROID_SERIAL" '$1 == serial && $2 == "device" {print $1; exit}')"
+  else
+    selected="$(print -r -- "$devices" | awk '$2 == "device" {print $1; exit}')"
+  fi
+
+  if [[ -n "$selected" ]]; then
+    ADB_SERIAL="$selected"
+    return 0
+  fi
+
+  return 1
+}
+
+android_summary() {
+  local manufacturer model release sdk
+  manufacturer="$(adb_shell "getprop ro.product.manufacturer" 2>/dev/null | tr -d '\r')"
+  model="$(adb_shell "getprop ro.product.model" 2>/dev/null | tr -d '\r')"
+  release="$(adb_shell "getprop ro.build.version.release" 2>/dev/null | tr -d '\r')"
+  sdk="$(adb_shell "getprop ro.build.version.sdk" 2>/dev/null | tr -d '\r')"
+  ok "ADB connected: ${manufacturer:-Android} ${model:-device}, Android ${release:-?} / SDK ${sdk:-?} (${ADB_SERIAL})"
+}
+
+ensure_adb_device_or_fail() {
+  if ! start_adb_if_available; then
+    fail "ADB is required. Install with: brew install android-platform-tools"
+    return 1
+  fi
+
+  info "Waiting for the phone over ADB. Unlock the phone if needed."
+  if ! wait_for_adb_device; then
+    fail "No authorized ADB device found. Replug USB, unlock the phone, and approve USB debugging."
+    return 1
+  fi
+
+  android_summary
+}
+
+android_abi() {
+  adb_shell "getprop ro.product.cpu.abi" 2>/dev/null | tr -d '\r' | awk 'NF {print; exit}'
+}
+
+try_adb_shell() {
+  local description="$1"
+  local command_text="$2"
+  local output rc
+
+  debug "adb shell $command_text"
+  output="$(adb_shell "$command_text" 2>&1)"
+  rc=$?
+
+  if (( rc == 0 )); then
+    ok "$description"
+    [[ -n "$output" ]] && debug "$output"
+    return 0
+  fi
+
+  debug "$description failed: $output"
+  return 1
+}
+
+open_android_tether_settings() {
+  if (( ! OPEN_SETTINGS )); then
+    return 0
+  fi
+
+  if try_adb_shell "Opened Android tethering settings on the phone." "am start -a android.settings.TETHER_SETTINGS"; then
+    return 0
+  fi
+
+  try_adb_shell "Opened Android wireless settings on the phone." "am start -a android.settings.WIRELESS_SETTINGS" || true
+}
+
+try_android_tethering() {
+  local tried=0
+
+  if (( MOBILE_ONLY )); then
+    info "Asking the phone to prefer cellular data."
+    try_adb_shell "Mobile data enable command sent." "svc data enable" || true
+    try_adb_shell "Phone Wi-Fi disable command sent." "svc wifi disable" || true
+  fi
+
+  info "Trying Android-side USB tethering commands."
+  try_adb_shell "Requested USB tethering through Android connectivity service." "cmd connectivity tether start usb" && tried=1
+  try_adb_shell "Requested RNDIS tethering through Android connectivity service." "cmd connectivity tether start rndis" && tried=1
+  try_adb_shell "Set USB function to rndis,adb." "svc usb setFunctions rndis,adb" && tried=1
+  try_adb_shell "Set USB function to rndis,adb using old syntax." "svc usb setFunction rndis,adb true" && tried=1
+
+  if (( AGGRESSIVE_ANDROID )); then
+    warn "Trying aggressive Android USB commands. ADB may disconnect if one succeeds."
+    try_adb_shell "Set USB function to rndis." "svc usb setFunctions rndis" && tried=1
+    try_adb_shell "Set sys.usb.config to rndis,adb." "setprop sys.usb.config rndis,adb" && tried=1
+  fi
+
+  open_android_tether_settings
+
+  if (( tried )); then
+    info "If the phone asks for confirmation, unlock it and allow USB tethering."
+  else
+    warn "Automatic tethering commands were not accepted. Turn on 'USB tethering' on the phone screen."
+  fi
+}
+
+network_snapshot() {
+  networksetup -listnetworkserviceorder 2>/dev/null | awk '
+    /^\([0-9]+\) / {
+      service = $0
+      sub(/^\([0-9]+\) /, "", service)
+      next
+    }
+    /Hardware Port: / && service != "" {
+      line = $0
+      sub(/^.*Hardware Port: /, "", line)
+      split(line, parts, ", Device: ")
+      port = parts[1]
+      device = parts[2]
+      sub(/\).*$/, "", device)
+      print service "\t" port "\t" device
+      service = ""
+    }
+  '
+}
+
+hardware_snapshot() {
+  networksetup -listallhardwareports 2>/dev/null | awk '
+    /^Hardware Port: / {
+      port = $0
+      sub(/^Hardware Port: /, "", port)
+      next
+    }
+    /^Device: / {
+      device = $0
+      sub(/^Device: /, "", device)
+      next
+    }
+    /^Ethernet Address: / && port != "" && device != "" {
+      mac = $0
+      sub(/^Ethernet Address: /, "", mac)
+      print port "\t" device "\t" mac
+      port = ""
+      device = ""
+    }
+  '
+}
+
+all_network_services() {
+  networksetup -listallnetworkservices 2>/dev/null | sed '1d;s/^\*//'
+}
+
+active_network_services() {
+  networksetup -listnetworkserviceorder 2>/dev/null | awk '
+    /^\([0-9]+\) / {
+      service = $0
+      sub(/^\([0-9]+\) /, "", service)
+      print service
+    }
+  '
+}
+
+service_ip() {
+  networksetup -getinfo "$1" 2>/dev/null | awk -F': ' '/^IP address:/ {print $2; exit}'
+}
+
+service_router() {
+  networksetup -getinfo "$1" 2>/dev/null | awk -F': ' '/^Router:/ {print $2; exit}'
+}
+
+is_skippable_network() {
+  local text="${1:l} ${2:l} ${3:l}"
+  [[ "$text" == *"wi-fi"* || "$text" == *"wifi"* || "$text" == *"thunderbolt"* || "$text" == *"bridge"* ]]
+}
+
+find_candidate_service() {
+  local before_file="$1"
+  local after_file="$2"
+  local line service port device ip router text
+
+  line="$(awk -F '\t' '
+    NR == FNR { old[$1] = 1; next }
+    {
+      text = tolower($1 " " $2 " " $3)
+      if (text ~ /(wi-fi|wifi|thunderbolt|bridge)/) next
+      if (!old[$1]) { print $0; exit }
+    }
+  ' "$before_file" "$after_file")"
+  if [[ -n "$line" ]]; then
+    print -r -- "$line"
+    return 0
+  fi
+
+  line="$(awk -F '\t' '
+    {
+      text = tolower($1 " " $2 " " $3)
+      if (text ~ /(wi-fi|wifi|thunderbolt|bridge)/) next
+      if (text ~ /(android|samsung|galaxy|rndis|horndis|ncm|cdc)/) { print $0; exit }
+    }
+  ' "$after_file")"
+  if [[ -n "$line" ]]; then
+    print -r -- "$line"
+    return 0
+  fi
+
+  while IFS=$'\t' read -r service port device; do
+    [[ -z "$service" ]] && continue
+    is_skippable_network "$service" "$port" "$device" && continue
+    ip="$(service_ip "$service")"
+    router="$(service_router "$service")"
+    text="$ip $router"
+    if [[ "$text" == *"192.168.42."* || "$text" == *"192.168.43."* || "$text" == *"192.168.44."* || "$text" == *"172.20.10."* ]]; then
+      print -r -- "${service}\t${port}\t${device}"
+      return 0
+    fi
+  done < "$after_file"
+
+  return 1
+}
+
+find_candidate_hardware() {
+  local before_file="$1"
+  local after_file="$2"
+  local line
+
+  line="$(awk -F '\t' '
+    NR == FNR { old[$1 "\t" $2] = 1; next }
+    {
+      text = tolower($1 " " $2 " " $3)
+      if (text ~ /(wi-fi|wifi|thunderbolt|bridge)/) next
+      if (!old[$1 "\t" $2]) { print $0; exit }
+    }
+  ' "$before_file" "$after_file")"
+  if [[ -n "$line" ]]; then
+    print -r -- "$line"
+    return 0
+  fi
+
+  line="$(awk -F '\t' '
+    {
+      text = tolower($1 " " $2 " " $3)
+      if (text ~ /(wi-fi|wifi|thunderbolt|bridge)/) next
+      if (text ~ /(android|samsung|galaxy|rndis|horndis|ncm|cdc)/) { print $0; exit }
+    }
+  ' "$after_file")"
+  if [[ -n "$line" ]]; then
+    print -r -- "$line"
+    return 0
+  fi
+
+  return 1
+}
+
+service_line_for_device() {
+  local snapshot_file="$1"
+  local device="$2"
+  awk -F '\t' -v device="$device" '$3 == device { print $0; exit }' "$snapshot_file"
+}
+
+create_network_service_for_hardware() {
+  local port="$1"
+  local device="$2"
+  local service_name="Android USB Tether ${device}"
+  local output rc
+
+  if all_network_services | grep -Fxq "$service_name"; then
+    print -r -- "$service_name"
+    return 0
+  fi
+
+  info "Creating macOS network service '$service_name' for hardware port '$port'."
+  output="$(networksetup -createnetworkservice "$service_name" "$port" 2>&1)"
+  rc=$?
+  if (( rc == 0 )); then
+    ok "Created network service '$service_name'."
+    print -r -- "$service_name"
+    return 0
+  fi
+
+  warn "Could not create network service for '$port'. macOS may require admin rights or may not support this hardware."
+  debug "$output"
+  return 1
+}
+
+backup_service_order_once() {
+  ensure_state_dir
+  if [[ ! -s "$ORDER_BACKUP" ]]; then
+    all_network_services > "$ORDER_BACKUP"
+    ok "Saved current network service order: $ORDER_BACKUP"
+  fi
+}
+
+prefer_network_service() {
+  local service="$1"
+  local -a services reordered
+  local item output rc
+
+  (( PREFER_TETHER )) || return 0
+
+  services=("${(@f)$(all_network_services)}")
+  reordered=("$service")
+
+  for item in "${services[@]}"; do
+    [[ "$item" == "$service" ]] && continue
+    [[ -z "$item" ]] && continue
+    reordered+=("$item")
+  done
+
+  if (( ${#reordered[@]} < 2 )); then
+    return 0
+  fi
+
+  backup_service_order_once
+  output="$(networksetup -ordernetworkservices "${reordered[@]}" 2>&1)"
+  rc=$?
+  if (( rc == 0 )); then
+    ok "Moved '$service' to the top of macOS network service order."
+  else
+    warn "Could not change service order. macOS may ask for admin rights."
+    debug "$output"
+  fi
+}
+
+configure_network_service() {
+  local service="$1"
+  local device="$2"
+  local output rc
+
+  info "Configuring macOS network service: $service (${device:-no-device})"
+
+  networksetup -setnetworkserviceenabled "$service" on >/dev/null 2>&1 || true
+
+  output="$(networksetup -setdhcp "$service" 2>&1)"
+  rc=$?
+  if (( rc == 0 )); then
+    ok "DHCP enabled on '$service'."
+  else
+    warn "Could not set DHCP on '$service'."
+    debug "$output"
+  fi
+
+  if [[ -n "$device" ]]; then
+    ifconfig "$device" up >/dev/null 2>&1 || true
+    ipconfig set "$device" DHCP >/dev/null 2>&1 || true
+  fi
+
+  prefer_network_service "$service"
+}
+
+connectivity_check() {
+  local route_interface route_gateway
+
+  route_interface="$(route -n get default 2>/dev/null | awk '/interface:/ {print $2; exit}')"
+  route_gateway="$(route -n get default 2>/dev/null | awk '/gateway:/ {print $2; exit}')"
+
+  if [[ -n "$route_interface" ]]; then
+    info "Default route: interface=${route_interface}, gateway=${route_gateway:-unknown}"
+  else
+    warn "No default route is currently configured."
+  fi
+
+  if curl -fsS --max-time 6 https://connectivitycheck.gstatic.com/generate_204 >/dev/null 2>&1; then
+    ok "Internet check succeeded over HTTPS."
+    return 0
+  fi
+
+  if ping -c 1 -W 2000 1.1.1.1 >/dev/null 2>&1; then
+    ok "Internet check succeeded with ICMP."
+    return 0
+  fi
+
+  warn "Internet check failed. The interface may still be acquiring IP/DNS, or cellular data may be unavailable."
+  return 1
+}
+
+wait_for_mac_usb_network() {
+  local before_file="$1"
+  local before_hardware_file="$2"
+  local after_file after_hardware_file line hardware_line service port device ip router created_service
+  local i j
+
+  after_file="$(mktemp "${TMPDIR:-/tmp}/jam-usb-after.XXXXXX")"
+  after_hardware_file="$(mktemp "${TMPDIR:-/tmp}/jam-usb-hw-after.XXXXXX")"
+
+  info "Waiting for macOS to expose a USB network interface (${TIMEOUT}s)."
+  for (( i = 1; i <= TIMEOUT; i++ )); do
+    networksetup -detectnewhardware >/dev/null 2>&1 || true
+    network_snapshot > "$after_file"
+    hardware_snapshot > "$after_hardware_file"
+
+    if line="$(find_candidate_service "$before_file" "$after_file")"; then
+      service="$(print -r -- "$line" | cut -f1)"
+      port="$(print -r -- "$line" | cut -f2)"
+      device="$(print -r -- "$line" | cut -f3)"
+      ok "Found likely USB internet service: $service / $port / $device"
+      configure_network_service "$service" "$device"
+
+      for (( j = 1; j <= 15; j++ )); do
+        ip="$(service_ip "$service")"
+        router="$(service_router "$service")"
+        if [[ -n "$ip" && "$ip" != "none" ]]; then
+          ok "IP acquired on '$service': ${ip}, router=${router:-unknown}"
+          break
+        fi
+        sleep 1
+      done
+
+      connectivity_check
+      rm -f "$after_file" "$after_hardware_file"
+      return 0
+    fi
+
+    if hardware_line="$(find_candidate_hardware "$before_hardware_file" "$after_hardware_file")"; then
+      port="$(print -r -- "$hardware_line" | cut -f1)"
+      device="$(print -r -- "$hardware_line" | cut -f2)"
+      ok "Found likely USB tether hardware: $port / $device"
+
+      if created_service="$(create_network_service_for_hardware "$port" "$device")"; then
+        networksetup -detectnewhardware >/dev/null 2>&1 || true
+        network_snapshot > "$after_file"
+        line="$(service_line_for_device "$after_file" "$device")"
+        if [[ -n "$line" ]]; then
+          service="$(print -r -- "$line" | cut -f1)"
+        else
+          service="$created_service"
+        fi
+
+        configure_network_service "$service" "$device"
+
+        for (( j = 1; j <= 15; j++ )); do
+          ip="$(service_ip "$service")"
+          router="$(service_router "$service")"
+          if [[ -n "$ip" && "$ip" != "none" ]]; then
+            ok "IP acquired on '$service': ${ip}, router=${router:-unknown}"
+            break
+          fi
+          sleep 1
+        done
+
+        connectivity_check
+        rm -f "$after_file" "$after_hardware_file"
+        return 0
+      fi
+    fi
+
+    sleep 1
+  done
+
+  rm -f "$after_file" "$after_hardware_file"
+  return 1
+}
+
+print_usb_hint() {
+  local usb_matches ioreg_matches
+  usb_matches="$(system_profiler SPUSBDataType 2>/dev/null | grep -Ei 'samsung|galaxy|android|rndis|ncm|cdc' || true)"
+  if [[ -n "$usb_matches" ]]; then
+    info "USB device hints seen by macOS:"
+    print -r -- "$usb_matches" | sed 's/^/  /'
+    return 0
+  fi
+
+  ioreg_matches="$(ioreg -p IOUSB -w0 -l -r -c IOUSBHostDevice 2>/dev/null | grep -Ei 'SAMSUNG_Android|Android|Galaxy|RNDIS|NCM|CDC|USB Product Name|USB Vendor Name|kUSBSerialNumberString|idVendor|idProduct' | sed -n '1,80p' || true)"
+  if [[ -z "$ioreg_matches" ]]; then
+    ioreg_matches="$(ioreg -p IOUSBHost -w0 -l -r -c IOUSBHostDevice 2>/dev/null | grep -Ei 'SAMSUNG_Android|Android|Galaxy|RNDIS|NCM|CDC|USB Product Name|USB Vendor Name|kUSBSerialNumberString|idVendor|idProduct' | sed -n '1,80p' || true)"
+  fi
+
+  if [[ -n "$ioreg_matches" ]]; then
+    info "USB device hints seen by macOS ioreg:"
+    print -r -- "$ioreg_matches" | sed 's/^/  /'
+  else
+    warn "macOS did not report an obvious Samsung/Android USB device."
+  fi
+}
+
+connect_command() {
+  local before_file before_hardware_file
+
+  require_macos
+  say "${BOLD}${APP_NAME} ${VERSION}${RESET}"
+  info "Mac: $(sw_vers -productName) $(sw_vers -productVersion), $(uname -m)"
+
+  before_file="$(mktemp "${TMPDIR:-/tmp}/jam-usb-before.XXXXXX")"
+  before_hardware_file="$(mktemp "${TMPDIR:-/tmp}/jam-usb-hw-before.XXXXXX")"
+  network_snapshot > "$before_file"
+  hardware_snapshot > "$before_hardware_file"
+
+  if start_adb_if_available; then
+    info "Waiting for the phone over ADB. Unlock the phone if needed."
+    if wait_for_adb_device; then
+      android_summary
+      try_android_tethering
+    else
+      warn "No authorized ADB device found within ${TIMEOUT}s."
+      warn "You can still turn on USB tethering manually on the phone."
+    fi
+  else
+    warn "ADB is not available. Manual phone-side setup is required."
+    warn "Install later with: brew install android-platform-tools"
+  fi
+
+  info "If the phone screen is open, enable: Settings > Connections > Mobile Hotspot and Tethering > USB tethering."
+
+  if wait_for_mac_usb_network "$before_file" "$before_hardware_file"; then
+    rm -f "$before_file" "$before_hardware_file"
+    return 0
+  fi
+
+  fail "No usable USB network interface appeared on macOS."
+  print_usb_hint
+
+  if (( FALLBACK_PROXY )); then
+    warn "Native USB networking did not come up. Starting ADB SOCKS proxy fallback."
+    proxy_command
+    return $?
+  fi
+
+  say ""
+  warn "Likely causes:"
+  say "  1. USB tethering is not enabled on the phone."
+  say "  2. The cable is charge-only, not data-capable."
+  say "  3. Cellular data is unavailable."
+  say "  4. macOS does not support the phone's native USB tethering mode."
+  say ""
+  say "Next best actions:"
+  say "  - On the phone, turn on USB tethering manually and run this again."
+  say "  - Enable Developer options > Default USB configuration > USB tethering, if your Note 9 shows it."
+  say "  - Run './jam-usb-internet doctor' for a concise checklist."
+
+  rm -f "$before_file" "$before_hardware_file"
+  return 1
+}
+
+save_socks_state_once() {
+  local service enabled server port
+
+  ensure_state_dir
+  if [[ -s "$SOCKS_BACKUP" ]]; then
+    return 0
+  fi
+
+  : > "$SOCKS_BACKUP"
+  while IFS= read -r service; do
+    [[ -z "$service" ]] && continue
+    enabled="$(networksetup -getsocksfirewallproxy "$service" 2>/dev/null | awk -F': ' '/^Enabled:/ {print $2; exit}')"
+    server="$(networksetup -getsocksfirewallproxy "$service" 2>/dev/null | awk -F': ' '/^Server:/ {print $2; exit}')"
+    port="$(networksetup -getsocksfirewallproxy "$service" 2>/dev/null | awk -F': ' '/^Port:/ {print $2; exit}')"
+    print -r -- "${service}\t${enabled:-No}\t${server:-}\t${port:-0}" >> "$SOCKS_BACKUP"
+  done < <(all_network_services)
+
+  ok "Saved current SOCKS proxy settings: $SOCKS_BACKUP"
+}
+
+enable_system_socks_proxy() {
+  local service output rc
+
+  (( SYSTEM_PROXY )) || return 0
+  save_socks_state_once
+
+  while IFS= read -r service; do
+    [[ -z "$service" ]] && continue
+    output="$(networksetup -setsocksfirewallproxy "$service" "$PROXY_HOST" "$PROXY_PORT" 2>&1)"
+    rc=$?
+    if (( rc != 0 )); then
+      warn "Could not set SOCKS proxy on '$service'."
+      debug "$output"
+      continue
+    fi
+    networksetup -setsocksfirewallproxystate "$service" on >/dev/null 2>&1 || true
+    ok "Enabled SOCKS proxy on '$service' -> ${PROXY_HOST}:${PROXY_PORT}"
+  done < <(all_network_services)
+}
+
+restore_system_socks_proxy() {
+  local service enabled server port
+
+  if [[ ! -s "$SOCKS_BACKUP" ]]; then
+    warn "No SOCKS proxy backup found. Turning SOCKS proxy off on all services."
+    while IFS= read -r service; do
+      [[ -z "$service" ]] && continue
+      networksetup -setsocksfirewallproxystate "$service" off >/dev/null 2>&1 || true
+    done < <(all_network_services)
+    return 0
+  fi
+
+  while IFS=$'\t' read -r service enabled server port; do
+    [[ -z "$service" ]] && continue
+    if [[ "$enabled" == "Yes" && "$server" == "$PROXY_HOST" && "$port" == "$PROXY_PORT" ]]; then
+      networksetup -setsocksfirewallproxystate "$service" off >/dev/null 2>&1 || true
+    elif [[ "$enabled" == "Yes" && -n "$server" && "$port" != "0" ]]; then
+      networksetup -setsocksfirewallproxy "$service" "$server" "$port" >/dev/null 2>&1 || true
+      networksetup -setsocksfirewallproxystate "$service" on >/dev/null 2>&1 || true
+    else
+      networksetup -setsocksfirewallproxystate "$service" off >/dev/null 2>&1 || true
+    fi
+  done < "$SOCKS_BACKUP"
+
+  rm -f "$SOCKS_BACKUP"
+  ok "Restored previous SOCKS proxy settings."
+}
+
+set_dns_servers_for_service() {
+  local service="$1"
+  local output rc
+  shift
+
+  if (( EUID == 0 )); then
+    output="$(networksetup -setdnsservers "$service" "$@" 2>&1)"
+    rc=$?
+    if (( rc == 0 )); then
+      return 0
+    fi
+
+    warn "Could not set DNS on '$service': $output"
+    return "$rc"
+  fi
+
+  output="$(sudo -n networksetup -setdnsservers "$service" "$@" 2>&1)"
+  rc=$?
+  if (( rc == 0 )); then
+    return 0
+  fi
+
+  if [[ -t 0 ]]; then
+    sudo networksetup -setdnsservers "$service" "$@"
+    rc=$?
+    if (( rc == 0 )); then
+      return 0
+    fi
+
+    warn "Could not set DNS on '$service' with sudo."
+    return "$rc"
+  fi
+
+  warn "Could not set DNS on '$service': $output"
+  return 1
+}
+
+dns_servers_for_service() {
+  local service="$1"
+  networksetup -getdnsservers "$service" 2>/dev/null | sed "/There aren't any DNS Servers/d"
+}
+
+dns_servers_are_local_only() {
+  local servers="$1"
+  local line seen=0
+
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    seen=1
+    case "$line" in
+      127.0.0.1|::1|localhost)
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  done <<< "$servers"
+
+  (( seen ))
+}
+
+save_dns_state_once() {
+  local service dns
+
+  ensure_state_dir
+  if [[ -s "$DNS_BACKUP" ]]; then
+    return 0
+  fi
+
+  : > "$DNS_BACKUP"
+  while IFS= read -r service; do
+    [[ -z "$service" ]] && continue
+    dns="$(dns_servers_for_service "$service" | paste -sd, -)"
+    [[ -z "$dns" ]] && dns="__EMPTY__"
+    print -r -- "${service}"$'\t'"${dns}" >> "$DNS_BACKUP"
+  done < <(all_network_services)
+
+  ok "Saved current DNS settings: $DNS_BACKUP"
+}
+
+enable_local_system_dns() {
+  local service
+  local failed=0
+
+  repair_stale_local_dns || return 1
+  save_dns_state_once
+  while IFS= read -r service; do
+    [[ -z "$service" ]] && continue
+    if set_dns_servers_for_service "$service" 127.0.0.1; then
+      ok "Set DNS on '$service' -> 127.0.0.1"
+    else
+      warn "Could not set DNS on '$service'."
+      failed=1
+    fi
+  done < <(all_network_services)
+
+  (( failed == 0 ))
+}
+
+restore_system_dns() {
+  local line service dns current
+  local failed=0
+  local -a servers
+
+  if [[ ! -s "$DNS_BACKUP" ]]; then
+    repair_stale_local_dns
+    return 0
+  fi
+
+  while IFS= read -r line; do
+    if [[ "$line" == *"\\t"* ]]; then
+      service="${line%%\\t*}"
+      dns="${line#*\\t}"
+    else
+      service="${line%%$'\t'*}"
+      dns="${line#*$'\t'}"
+    fi
+    [[ -z "$service" ]] && continue
+    if [[ "$service" == "$dns" ]]; then
+      warn "Skipping malformed DNS backup line: $line"
+      failed=1
+      continue
+    fi
+
+    current="$(dns_servers_for_service "$service" | paste -sd, -)"
+    if [[ "$dns" == "__EMPTY__" ]]; then
+      if [[ -z "$current" ]]; then
+        continue
+      fi
+      if ! set_dns_servers_for_service "$service" Empty; then
+        warn "Could not restore DNS on '$service' to DHCP/empty."
+        failed=1
+      fi
+    else
+      if [[ "$current" == "$dns" ]]; then
+        continue
+      fi
+      servers=("${(@s:,:)dns}")
+      if ! set_dns_servers_for_service "$service" "${servers[@]}"; then
+        warn "Could not restore DNS on '$service' to: ${servers[*]}"
+        failed=1
+      fi
+    fi
+  done < "$DNS_BACKUP"
+
+  if (( failed )); then
+    warn "DNS backup kept for recovery: $DNS_BACKUP"
+    return 1
+  fi
+
+  rm -f "$DNS_BACKUP"
+  ok "Restored previous DNS settings."
+}
+
+repair_stale_local_dns() {
+  local service servers
+  local repaired=0 failed=0
+
+  while IFS= read -r service; do
+    [[ -z "$service" ]] && continue
+    servers="$(dns_servers_for_service "$service")"
+    if dns_servers_are_local_only "$servers"; then
+      warn "Detected stale local DNS on '$service'; restoring DHCP/empty DNS."
+      if set_dns_servers_for_service "$service" Empty; then
+        repaired=1
+      else
+        warn "Could not repair stale DNS on '$service'."
+        failed=1
+      fi
+    fi
+  done < <(all_network_services)
+
+  if (( repaired )); then
+    dscacheutil -flushcache >/dev/null 2>&1 || true
+    ok "Repaired stale local DNS settings."
+  fi
+
+  (( failed == 0 ))
+}
+
+run_scutil_as_root() {
+  if (( EUID == 0 )); then
+    scutil
+  else
+    sudo -n scutil
+  fi
+}
+
+enable_dynamic_local_dns() {
+  local output rc
+
+  output="$({
+      print -r -- "d.init"
+      print -r -- "d.add ServerAddresses * 127.0.0.1"
+      print -r -- "d.add SupplementalMatchDomains * \"\""
+      print -r -- "d.add SupplementalMatchOrders * 1"
+      print -r -- "d.add SearchOrder # 1"
+      print -r -- "set ${DYNAMIC_DNS_KEY}"
+      print -r -- "quit"
+    } | run_scutil_as_root 2>&1)"
+  rc=$?
+
+  if (( rc != 0 )); then
+    warn "Could not install temporary macOS DNS resolver."
+    debug "$output"
+    return "$rc"
+  fi
+
+  dscacheutil -flushcache >/dev/null 2>&1 || true
+  ok "Installed temporary macOS DNS resolver -> 127.0.0.1"
+}
+
+disable_dynamic_local_dns() {
+  local output
+
+  output="$({
+      print -r -- "remove ${DYNAMIC_DNS_KEY}"
+      print -r -- "quit"
+    } | run_scutil_as_root 2>&1)" || debug "$output"
+
+  dscacheutil -flushcache >/dev/null 2>&1 || true
+}
+
+wait_for_macos_resolver() {
+  local i
+
+  for (( i = 1; i <= 12; i++ )); do
+    if dscacheutil -q host -a name example.com 2>/dev/null | grep -q "ip_address"; then
+      return 0
+    fi
+    sleep 0.5
+  done
+
+  return 1
+}
+
+proxy_command() {
+  local python_bin proxy_script
+
+  require_macos
+  ensure_state_dir
+
+  if ! start_adb_if_available; then
+    fail "ADB is required for proxy mode. Install with: brew install android-platform-tools"
+    return 1
+  fi
+
+  info "Waiting for the phone over ADB. Unlock the phone if needed."
+  if ! wait_for_adb_device; then
+    fail "No authorized ADB device found. Replug USB, unlock the phone, and approve USB debugging."
+    return 1
+  fi
+
+  android_summary
+
+  if (( MOBILE_ONLY )); then
+    info "Asking the phone to prefer cellular data."
+    try_adb_shell "Mobile data enable command sent." "svc data enable" || true
+    try_adb_shell "Phone Wi-Fi disable command sent." "svc wifi disable" || true
+  fi
+
+  if ! adb_shell "command -v nc" >/dev/null 2>&1; then
+    fail "The phone does not expose /system/bin/nc, so app-free proxy mode is unavailable."
+    return 1
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    python_bin="$(command -v python3)"
+  else
+    fail "python3 is required for proxy mode."
+    return 1
+  fi
+
+  proxy_script="${SCRIPT_DIR}/adb-socks-proxy.py"
+  if [[ ! -f "$proxy_script" ]]; then
+    fail "Proxy script not found: $proxy_script"
+    return 1
+  fi
+
+  enable_system_socks_proxy
+
+  say ""
+  ok "ADB SOCKS proxy is starting on ${PROXY_HOST}:${PROXY_PORT}"
+  info "Keep this terminal window open while using the connection."
+  info "To stop and restore proxy settings later: ./jam-usb-internet proxy-stop"
+  say ""
+
+  trap 'restore_system_socks_proxy' INT TERM HUP EXIT
+  "$python_bin" "$proxy_script" --host "$PROXY_HOST" --port "$PROXY_PORT" --adb "$ADB_BIN" --serial "$ADB_SERIAL"
+}
+
+wait_for_proxy_port() {
+  local i
+  for (( i = 1; i <= 50; i++ )); do
+    if command -v nc >/dev/null 2>&1 && nc -z "$PROXY_HOST" "$PROXY_PORT" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+launch_chrome_with_proxy() {
+  local chrome_app chrome_bin profile_dir
+
+  chrome_app="/Applications/Google Chrome.app"
+  chrome_bin="${chrome_app}/Contents/MacOS/Google Chrome"
+  profile_dir="${STATE_DIR}/chrome-proxy-profile"
+
+  if [[ ! -x "$chrome_bin" ]]; then
+    fail "Google Chrome is not installed at ${chrome_app}."
+    return 1
+  fi
+
+  mkdir -p "$profile_dir"
+
+  ok "Opening Chrome through SOCKS proxy ${PROXY_HOST}:${PROXY_PORT}"
+  open -na "$chrome_app" --args \
+    "--user-data-dir=${profile_dir}" \
+    "--proxy-server=socks5://${PROXY_HOST}:${PROXY_PORT}" \
+    "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1" \
+    "$BROWSER_URL"
+}
+
+browser_command() {
+  local python_bin proxy_script proxy_pid
+
+  require_macos
+  ensure_state_dir
+  SYSTEM_PROXY=0
+
+  if ! start_adb_if_available; then
+    fail "ADB is required for browser mode. Install with: brew install android-platform-tools"
+    return 1
+  fi
+
+  info "Waiting for the phone over ADB. Unlock the phone if needed."
+  if ! wait_for_adb_device; then
+    fail "No authorized ADB device found. Replug USB, unlock the phone, and approve USB debugging."
+    return 1
+  fi
+
+  android_summary
+
+  if (( MOBILE_ONLY )); then
+    info "Asking the phone to prefer cellular data."
+    try_adb_shell "Mobile data enable command sent." "svc data enable" || true
+    try_adb_shell "Phone Wi-Fi disable command sent." "svc wifi disable" || true
+  fi
+
+  if ! adb_shell "command -v nc" >/dev/null 2>&1; then
+    fail "The phone does not expose /system/bin/nc, so app-free browser mode is unavailable."
+    return 1
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    python_bin="$(command -v python3)"
+  else
+    fail "python3 is required for browser mode."
+    return 1
+  fi
+
+  proxy_script="${SCRIPT_DIR}/adb-socks-proxy.py"
+  if [[ ! -f "$proxy_script" ]]; then
+    fail "Proxy script not found: $proxy_script"
+    return 1
+  fi
+
+  "$python_bin" "$proxy_script" --host "$PROXY_HOST" --port "$PROXY_PORT" --adb "$ADB_BIN" --serial "$ADB_SERIAL" &
+  proxy_pid=$!
+  print -r -- "$proxy_pid" > "$PROXY_PID_FILE"
+
+  cleanup_browser_proxy() {
+    kill "$proxy_pid" >/dev/null 2>&1 || true
+    rm -f "$PROXY_PID_FILE"
+  }
+  trap 'cleanup_browser_proxy' INT TERM HUP EXIT
+
+  if ! wait_for_proxy_port; then
+    fail "SOCKS proxy did not start on ${PROXY_HOST}:${PROXY_PORT}."
+    cleanup_browser_proxy
+    return 1
+  fi
+
+  launch_chrome_with_proxy || {
+    cleanup_browser_proxy
+    return 1
+  }
+
+  say ""
+  ok "Dedicated Chrome window is using the phone over USB."
+  info "Keep this terminal window open. Close it to stop the proxy."
+  info "This browser mode works even when Mac Wi-Fi is on but not connected."
+  say ""
+
+  wait "$proxy_pid"
+}
+
+proxy_stop_command() {
+  restore_system_socks_proxy
+  local service current_server current_port
+  while IFS= read -r service; do
+    [[ -z "$service" ]] && continue
+    current_server="$(networksetup -getsocksfirewallproxy "$service" 2>/dev/null | awk -F': ' '/^Server:/ {print $2; exit}')"
+    current_port="$(networksetup -getsocksfirewallproxy "$service" 2>/dev/null | awk -F': ' '/^Port:/ {print $2; exit}')"
+    if [[ "$current_server" == "$PROXY_HOST" && "$current_port" == "$PROXY_PORT" ]]; then
+      networksetup -setsocksfirewallproxystate "$service" off >/dev/null 2>&1 || true
+    fi
+  done < <(all_network_services)
+
+  if [[ -s "$PROXY_PID_FILE" ]]; then
+    local pid
+    pid="$(< "$PROXY_PID_FILE")"
+    if [[ -n "$pid" ]]; then
+      kill "$pid" >/dev/null 2>&1 || true
+    fi
+    rm -f "$PROXY_PID_FILE"
+  fi
+
+  pkill -f "adb-socks-proxy.py" >/dev/null 2>&1 || true
+}
+
+relay_binary_for_abi() {
+  local abi="$1"
+  local explicit="${KNOCK_RELAY_BINARY:-}"
+  local candidate
+
+  if [[ -n "$explicit" ]]; then
+    print -r -- "$explicit"
+    return 0
+  fi
+
+  case "$abi" in
+    arm64-v8a)
+      candidate="${SCRIPT_DIR}/android-relay/bin/arm64-v8a/knock-relay"
+      ;;
+    armeabi-v7a)
+      candidate="${SCRIPT_DIR}/android-relay/bin/armeabi-v7a/knock-relay"
+      ;;
+    x86_64)
+      candidate="${SCRIPT_DIR}/android-relay/bin/x86_64/knock-relay"
+      ;;
+    *)
+      candidate="${SCRIPT_DIR}/android-relay/bin/${abi}/knock-relay"
+      ;;
+  esac
+
+  print -r -- "$candidate"
+}
+
+relay_install_command() {
+  local abi relay_binary
+
+  require_macos
+  ensure_adb_device_or_fail || return 1
+
+  abi="$(android_abi)"
+  if [[ -z "$abi" ]]; then
+    fail "Could not detect Android ABI."
+    return 1
+  fi
+  ok "Detected Android ABI: $abi"
+
+  relay_binary="$(relay_binary_for_abi "$abi")"
+  if [[ ! -f "$relay_binary" ]]; then
+    fail "Relay binary is missing: $relay_binary"
+    say ""
+    say "Build it with: cd ${SCRIPT_DIR}/android-relay && ./build.sh"
+    say "Expected install target: ${RELAY_REMOTE_PATH}"
+    say "Override path later with: --relay-binary /path/to/knock-relay"
+    return 1
+  fi
+
+  info "Uploading relay binary to ${RELAY_REMOTE_PATH}"
+  adb_cmd push "$relay_binary" "$RELAY_REMOTE_PATH" >/dev/null || return 1
+  adb_shell "chmod 755 ${RELAY_REMOTE_PATH}" >/dev/null || return 1
+
+  ok "Relay installed at ${RELAY_REMOTE_PATH}"
+}
+
+relay_is_installed() {
+  adb_shell "[ -x '${RELAY_REMOTE_PATH}' ]" >/dev/null 2>&1
+}
+
+relay_start_command() {
+  local output
+
+  require_macos
+  ensure_adb_device_or_fail || return 1
+
+  if ! relay_is_installed; then
+    fail "Relay is not installed at ${RELAY_REMOTE_PATH}."
+    say "Run relay-install after the Stage 2 relay binary exists."
+    return 1
+  fi
+
+  info "Removing any old ADB forward on tcp:${RELAY_MAC_PORT}."
+  adb_cmd forward --remove "tcp:${RELAY_MAC_PORT}" >/dev/null 2>&1 || true
+
+  info "Starting Android relay on 127.0.0.1:${RELAY_DEVICE_PORT}."
+  adb_shell "pkill -f '${RELAY_REMOTE_PATH}' >/dev/null 2>&1 || true" >/dev/null 2>&1 || true
+  output="$(adb_shell "nohup '${RELAY_REMOTE_PATH}' --listen 127.0.0.1:${RELAY_DEVICE_PORT} > '${RELAY_REMOTE_LOG}' 2>&1 & echo \$!" 2>&1)"
+  debug "$output"
+
+  sleep 1
+
+  info "Creating ADB forward: Mac tcp:${RELAY_MAC_PORT} -> Android tcp:${RELAY_DEVICE_PORT}"
+  adb_cmd forward "tcp:${RELAY_MAC_PORT}" "tcp:${RELAY_DEVICE_PORT}" || return 1
+
+  ok "Relay forward is ready on 127.0.0.1:${RELAY_MAC_PORT}"
+  say "Check with: adb forward --list"
+}
+
+relay_stop_command() {
+  require_macos
+  if start_adb_if_available; then
+    if select_adb_device_now; then
+      adb_shell "pkill -f '${RELAY_REMOTE_PATH}' >/dev/null 2>&1 || true" >/dev/null 2>&1 || true
+      ok "Stopped Android relay if it was running."
+    else
+      warn "No ADB device available; removing local forward only."
+    fi
+    adb_cmd forward --remove "tcp:${RELAY_MAC_PORT}" >/dev/null 2>&1 || true
+  else
+    warn "ADB is not available; could not remove ADB forward."
+  fi
+
+  ok "Removed ADB forward tcp:${RELAY_MAC_PORT} if it existed."
+}
+
+relay_clean_command() {
+  relay_stop_command || true
+
+  if start_adb_if_available && wait_for_adb_device; then
+    adb_shell "rm -f '${RELAY_REMOTE_PATH}' '${RELAY_REMOTE_LOG}'" >/dev/null 2>&1 || true
+    ok "Removed relay files from Android."
+  else
+    warn "No ADB device available; could not remove Android relay files."
+  fi
+}
+
+stop_sing_box_processes() {
+  if [[ -s "$SING_BOX_PID_FILE" ]]; then
+    local pid
+    pid="$(< "$SING_BOX_PID_FILE")"
+    if [[ -n "$pid" ]]; then
+      kill "$pid" >/dev/null 2>&1 || true
+      sudo -n kill "$pid" >/dev/null 2>&1 || true
+    fi
+    rm -f "$SING_BOX_PID_FILE"
+  fi
+
+  pkill -f "sing-box.*${SING_BOX_CONFIG}" >/dev/null 2>&1 || true
+  sudo -n pkill -f "sing-box.*${SING_BOX_CONFIG}" >/dev/null 2>&1 || true
+}
+
+preclean_system_mode() {
+  info "Stopping any previous system-mode process before starting."
+  stop_sing_box_processes
+  disable_dynamic_local_dns
+  restore_system_dns || true
+  if start_adb_if_available; then
+    adb_cmd forward --remove "tcp:${RELAY_MAC_PORT}" >/dev/null 2>&1 || true
+    if select_adb_device_now; then
+      adb_shell "pkill -f '${RELAY_REMOTE_PATH}' >/dev/null 2>&1 || true" >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
+manual_route_prefixes() {
+  print -r -- "1.0.0.0/8"
+  print -r -- "2.0.0.0/7"
+  print -r -- "4.0.0.0/6"
+  print -r -- "8.0.0.0/5"
+  print -r -- "16.0.0.0/4"
+  print -r -- "32.0.0.0/3"
+  print -r -- "64.0.0.0/2"
+  print -r -- "128.0.0.0/1"
+}
+
+wait_for_tun_gateway() {
+  local i
+  for (( i = 1; i <= 50; i++ )); do
+    if ifconfig 2>/dev/null | grep -q "inet ${TUN_GATEWAY} "; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+wait_for_local_dns() {
+  local i
+
+  for (( i = 1; i <= 20; i++ )); do
+    if nslookup example.com 127.0.0.1 >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.5
+  done
+
+  return 1
+}
+
+current_tun_interface() {
+  ifconfig 2>/dev/null | awk -v gateway="$TUN_GATEWAY" '
+    /^[[:alnum:]]+[[:alnum:]._-]*: flags=/ {
+      iface = $1
+      sub(/:$/, "", iface)
+    }
+    $1 == "inet" && $2 == gateway {
+      print iface
+      exit
+    }
+  '
+}
+
+default_route_gateway() {
+  route -n get default 2>/dev/null | awk '/gateway:/ {print $2; exit}'
+}
+
+default_route_interface() {
+  route -n get default 2>/dev/null | awk '/interface:/ {print $2; exit}'
+}
+
+quick_internet_check() {
+  curl -4I -L --max-time 6 -sS -o /dev/null https://www.google.com/generate_204 >/dev/null 2>&1 ||
+    curl -4I -L --max-time 6 -sS -o /dev/null https://example.com >/dev/null 2>&1
+}
+
+phone_relay_health_check() {
+  curl --socks5-hostname "127.0.0.1:${RELAY_MAC_PORT}" --max-time 8 -fsSI https://example.com >/dev/null 2>&1
+}
+
+check_relay_https_endpoint() {
+  local label="$1"
+  local url="$2"
+  local code
+
+  code="$(curl --socks5-hostname "127.0.0.1:${RELAY_MAC_PORT}" -4I -L --max-time 15 -sS -o /dev/null -w "%{http_code}" "$url" 2>/dev/null || true)"
+  if [[ "$code" =~ '^[234][0-9][0-9]$' ]]; then
+    ok "$label reachable through Android relay ($code): $url"
+    return 0
+  fi
+
+  fail "$label failed through Android relay (${code:-no response}): $url"
+  return 1
+}
+
+check_relay_git_endpoint() {
+  if GIT_TERMINAL_PROMPT=0 git -c "http.proxy=socks5h://127.0.0.1:${RELAY_MAC_PORT}" -c http.lowSpeedLimit=1 -c http.lowSpeedTime=10 ls-remote https://github.com/git/git.git HEAD >/dev/null 2>&1; then
+    ok "git over HTTPS reachable through Android relay: github.com/git/git.git"
+    return 0
+  fi
+
+  fail "git over HTTPS failed through Android relay: github.com/git/git.git"
+  return 1
+}
+
+relay_network_check() {
+  local failed=0
+
+  check_relay_https_endpoint "Chrome/web" "https://www.google.com/generate_204" || failed=1
+  check_relay_https_endpoint "Discord gateway API" "https://discord.com/api/v10/gateway" || failed=1
+  check_relay_https_endpoint "Discord gateway TLS" "https://gateway.discord.gg/" || failed=1
+  check_relay_https_endpoint "Kakao" "https://talk.kakao.com" || failed=1
+  check_relay_git_endpoint || failed=1
+
+  return "$failed"
+}
+
+monitor_phone_relay() {
+  local sing_box_pid="$1"
+  local failures=0
+
+  while kill -0 "$sing_box_pid" >/dev/null 2>&1; do
+    sleep 5
+    if phone_relay_health_check; then
+      failures=0
+      continue
+    fi
+
+    failures=$(( failures + 1 ))
+    warn "Phone relay health check failed (${failures}/2)."
+    if (( failures >= 2 )); then
+      warn "Phone internet path appears down; stopping USB TUN so normal Mac networking can recover."
+      kill "$sing_box_pid" >/dev/null 2>&1 || true
+      return 0
+    fi
+  done
+}
+
+prepare_android_system_internet() {
+  if (( MOBILE_ONLY )); then
+    info "Asking the phone to use mobile data for system mode."
+    try_adb_shell "Mobile data enable command sent." "svc data enable" || true
+    try_adb_shell "Phone Wi-Fi disable command sent." "svc wifi disable" || true
+    sleep 1
+  fi
+}
+
+save_default_route_once() {
+  local gateway iface
+
+  ensure_state_dir
+  [[ -s "$DEFAULT_ROUTE_BACKUP" ]] && return 0
+
+  gateway="$(default_route_gateway)"
+  iface="$(default_route_interface)"
+  if [[ -z "$gateway" && -z "$iface" ]]; then
+    print -r -- "__NONE__"$'\t'"__NONE__" > "$DEFAULT_ROUTE_BACKUP"
+  else
+    print -r -- "${gateway:-__EMPTY__}"$'\t'"${iface:-__EMPTY__}" > "$DEFAULT_ROUTE_BACKUP"
+  fi
+}
+
+install_tun_default_route() {
+  local tun_if="$1"
+  local output rc current_route
+
+  save_default_route_once
+
+  if route -n get default 2>/dev/null | grep -q "interface: ${tun_if}"; then
+    ok "Temporary default route already points through ${tun_if}."
+    return 0
+  fi
+
+  output="$(sudo -n route -n change default "$TUN_GATEWAY" 2>&1)"
+  rc=$?
+  if (( rc != 0 )); then
+    debug "route change default failed: $output"
+    sudo -n route -n delete default >/dev/null 2>&1 || true
+    output="$(sudo -n route -n add default "$TUN_GATEWAY" 2>&1)"
+    rc=$?
+  fi
+
+  if (( rc != 0 )) && [[ "$output" != *"File exists"* ]]; then
+    warn "Could not install temporary default route through ${tun_if}: $output"
+    return "$rc"
+  fi
+
+  if ! route -n get default 2>/dev/null | grep -q "interface: ${tun_if}"; then
+    current_route="$(route -n get default 2>&1 | paste -sd ' ' -)"
+    warn "Temporary default route verification failed for ${tun_if}: ${current_route}"
+    return 1
+  fi
+
+  ok "Installed temporary default route through ${tun_if} for macOS app reachability."
+}
+
+restore_default_route() {
+  local tun_if="${1:-}"
+  local line gateway iface output rc
+
+  if [[ ! -s "$DEFAULT_ROUTE_BACKUP" ]]; then
+    if [[ -n "$tun_if" ]] && route -n get default 2>/dev/null | grep -q "interface: ${tun_if}"; then
+      sudo -n route -n delete default "$TUN_GATEWAY" >/dev/null 2>&1 || true
+      sudo -n route -n delete default -interface "$tun_if" >/dev/null 2>&1 || true
+    fi
+    return 0
+  fi
+
+  line="$(< "$DEFAULT_ROUTE_BACKUP")"
+  gateway="${line%%$'\t'*}"
+  iface="${line#*$'\t'}"
+
+  if [[ "$gateway" == "__NONE__" && "$iface" == "__NONE__" ]]; then
+    if [[ -n "$tun_if" ]] && route -n get default 2>/dev/null | grep -q "interface: ${tun_if}"; then
+      sudo -n route -n delete default "$TUN_GATEWAY" >/dev/null 2>&1 || true
+      sudo -n route -n delete default -interface "$tun_if" >/dev/null 2>&1 || true
+    fi
+    rm -f "$DEFAULT_ROUTE_BACKUP"
+    return 0
+  fi
+
+  if [[ "$gateway" != "__EMPTY__" ]]; then
+    output="$(sudo -n route -n change default "$gateway" 2>&1)"
+    rc=$?
+    if (( rc != 0 )); then
+      debug "route change default restore failed: $output"
+      sudo -n route -n delete default >/dev/null 2>&1 || true
+      output="$(sudo -n route -n add default "$gateway" 2>&1)"
+      rc=$?
+    fi
+  elif [[ "$iface" != "__EMPTY__" ]]; then
+    output="$(sudo -n route -n change default -interface "$iface" 2>&1)"
+    rc=$?
+    if (( rc != 0 )); then
+      debug "route change default interface restore failed: $output"
+      sudo -n route -n delete default >/dev/null 2>&1 || true
+      output="$(sudo -n route -n add default -interface "$iface" 2>&1)"
+      rc=$?
+    fi
+  else
+    rc=0
+  fi
+
+  if (( rc != 0 )); then
+    warn "Could not restore previous default route: $output"
+    warn "Default route backup kept for recovery: $DEFAULT_ROUTE_BACKUP"
+    return "$rc"
+  fi
+
+  rm -f "$DEFAULT_ROUTE_BACKUP"
+  ok "Restored previous default route."
+}
+
+install_manual_tun_routes() {
+  local prefix tun_if output rc failed=0
+
+  tun_if="$(current_tun_interface)"
+  if [[ -z "$tun_if" ]]; then
+    fail "Could not identify the TUN interface for ${TUN_GATEWAY}."
+    return 1
+  fi
+
+  info "Installing IPv4 split routes through ${tun_if}."
+
+  install_tun_default_route "$tun_if" || failed=1
+
+  while IFS= read -r prefix; do
+    [[ -z "$prefix" ]] && continue
+    output="$(sudo -n route -n add -net "$prefix" -interface "$tun_if" 2>&1)"
+    rc=$?
+    if (( rc != 0 )) && [[ "$output" != *"File exists"* ]]; then
+      warn "Could not add route ${prefix} through ${tun_if}: $output"
+      failed=1
+    fi
+  done < <(manual_route_prefixes)
+
+  if ! route -n get 1.1.1.1 2>/dev/null | grep -q "interface: ${tun_if}"; then
+    fail "Route verification failed: 1.1.1.1 is not routed through ${tun_if}."
+    return 1
+  fi
+
+  ok "IPv4 route verification passed through ${tun_if}."
+  (( failed == 0 ))
+}
+
+delete_manual_tun_routes() {
+  local prefix tun_if
+
+  tun_if="$(current_tun_interface)"
+  restore_default_route "$tun_if" || true
+
+  while IFS= read -r prefix; do
+    [[ -z "$prefix" ]] && continue
+    if [[ -n "$tun_if" ]]; then
+      sudo -n route -n delete -net "$prefix" -interface "$tun_if" >/dev/null 2>&1 || true
+    fi
+    sudo -n route -n delete -net "$prefix" >/dev/null 2>&1 || true
+  done < <(manual_route_prefixes)
+}
+
+system_command() {
+  local sing_box_bin template sing_box_pid monitor_pid
+
+  require_macos
+  ensure_state_dir
+
+  if command -v sing-box >/dev/null 2>&1; then
+    sing_box_bin="$(command -v sing-box)"
+  else
+    fail "sing-box is required for system mode. Install with: brew install sing-box"
+    return 1
+  fi
+
+  if (( ! CHECK_ONLY )); then
+    preclean_system_mode
+    if (( ! FORCE_TUN )) && quick_internet_check; then
+      ok "Normal Mac internet is already working. USB TUN was not started."
+      info "This preserves Mac Wi-Fi when the phone has no internet."
+      info "Use --force-tun only for a deliberate USB-path test."
+      return 0
+    fi
+  fi
+
+  relay_install_command || return 1
+  prepare_android_system_internet
+  relay_start_command || return 1
+
+  if curl --socks5-hostname "127.0.0.1:${RELAY_MAC_PORT}" --max-time 10 -fsSI https://example.com >/dev/null 2>&1; then
+    ok "Relay health check succeeded through 127.0.0.1:${RELAY_MAC_PORT}"
+  else
+    fail "Relay health check failed through 127.0.0.1:${RELAY_MAC_PORT}"
+    relay_stop_command || true
+    return 1
+  fi
+
+  if ! relay_network_check; then
+    fail "Android relay is running, but app-style relay connectivity failed."
+    relay_stop_command || true
+    return 1
+  fi
+
+  template="${SCRIPT_DIR}/configs/sing-box.template.json"
+  if [[ ! -f "$template" ]]; then
+    fail "Missing sing-box template: $template"
+    relay_stop_command || true
+    return 1
+  fi
+
+  sed -e "s/\"server_port\": 18080/\"server_port\": ${RELAY_MAC_PORT}/" "$template" > "$SING_BOX_CONFIG"
+  "$sing_box_bin" check -c "$SING_BOX_CONFIG" || {
+    fail "Generated sing-box config failed validation: $SING_BOX_CONFIG"
+    relay_stop_command || true
+    return 1
+  }
+
+  if (( CHECK_ONLY )); then
+    ok "System mode check passed. Generated config: $SING_BOX_CONFIG"
+    relay_stop_command || true
+    return 0
+  fi
+
+  say ""
+  ok "System mode is ready to start."
+  info "TUN routing and local DNS setup need macOS administrator permission."
+  info "Keep this terminal open. Press Ctrl-C to stop and clean up."
+  say ""
+
+  cleanup_system() {
+    delete_manual_tun_routes
+    disable_dynamic_local_dns
+    if ! restore_system_dns; then
+      warn "DNS restore failed during cleanup. Run './jam-usb-internet system-stop' and verify Wi-Fi DNS."
+    fi
+    stop_sing_box_processes
+    relay_stop_command || true
+    rm -f "$SING_BOX_PID_FILE"
+  }
+  trap 'cleanup_system' INT TERM HUP EXIT
+
+  if (( EUID != 0 )); then
+    sudo -v || {
+      fail "Administrator permission is required for system mode."
+      cleanup_system
+      return 1
+    }
+  fi
+
+  if (( EUID == 0 )); then
+    "$sing_box_bin" run -c "$SING_BOX_CONFIG" &
+  else
+    sudo -n "$sing_box_bin" run -c "$SING_BOX_CONFIG" &
+  fi
+  sing_box_pid=$!
+  print -r -- "$sing_box_pid" > "$SING_BOX_PID_FILE"
+
+  if ! wait_for_tun_gateway; then
+    fail "TUN gateway ${TUN_GATEWAY} did not appear."
+    cleanup_system
+    return 1
+  fi
+
+  if ! install_manual_tun_routes; then
+    cleanup_system
+    return 1
+  fi
+  if ! wait_for_local_dns; then
+    fail "Local DNS at 127.0.0.1 did not answer. Refusing to change macOS DNS."
+    cleanup_system
+    return 1
+  fi
+
+  if ! enable_dynamic_local_dns; then
+    fail "Could not install temporary macOS DNS safely."
+    cleanup_system
+    return 1
+  fi
+
+  if ! wait_for_macos_resolver; then
+    fail "macOS resolver did not use the temporary local DNS."
+    cleanup_system
+    return 1
+  fi
+
+  if ! basic_network_check; then
+    fail "System mode started, but app connectivity checks failed. Cleaning up."
+    cleanup_system
+    return 1
+  fi
+
+  ok "System mode is running. Test with: curl https://example.com"
+  monitor_phone_relay "$sing_box_pid" &
+  monitor_pid=$!
+  wait "$sing_box_pid"
+  kill "$monitor_pid" >/dev/null 2>&1 || true
+}
+
+system_stop_command() {
+  say ""
+  require_macos
+  ensure_admin_if_interactive >/dev/null 2>&1 || true
+  delete_manual_tun_routes
+  disable_dynamic_local_dns
+  restore_system_dns || warn "DNS restore reported a problem. Try: ./jam-usb-internet system-recover"
+  stop_sing_box_processes
+  relay_stop_command || true
+  ok "System mode stop requested."
+}
+
+check_https_endpoint() {
+  local label="$1"
+  local url="$2"
+  local code
+
+  code="$(curl -4I -L --max-time 12 -sS -o /dev/null -w "%{http_code}" "$url" 2>/dev/null || true)"
+  if [[ "$code" =~ '^[234][0-9][0-9]$' ]]; then
+    ok "$label HTTPS reachable ($code): $url"
+    return 0
+  fi
+
+  fail "$label HTTPS failed (${code:-no response}): $url"
+  return 1
+}
+
+check_tcp_endpoint() {
+  local label="$1"
+  local host="$2"
+  local port="$3"
+
+  if nc -4 -G 8 -z "$host" "$port" >/dev/null 2>&1; then
+    ok "$label TCP reachable: ${host}:${port}"
+    return 0
+  fi
+
+  fail "$label TCP failed: ${host}:${port}"
+  return 1
+}
+
+check_reachability_endpoint() {
+  local label="$1"
+  local host="$2"
+  local output
+
+  output="$(scutil -r "$host" 2>&1 || true)"
+  if [[ "$output" == *"Reachable"* && "$output" != *"Not Reachable"* ]]; then
+    ok "$label macOS reachability: ${host} (${output})"
+    return 0
+  fi
+
+  fail "$label macOS reachability failed: ${host} (${output:-no response})"
+  return 1
+}
+
+check_git_endpoint() {
+  if GIT_TERMINAL_PROMPT=0 GIT_HTTP_LOW_SPEED_LIMIT=1 GIT_HTTP_LOW_SPEED_TIME=8 git -c http.lowSpeedLimit=1 -c http.lowSpeedTime=8 ls-remote https://github.com/git/git.git HEAD >/dev/null 2>&1; then
+    ok "git over HTTPS reachable: github.com/git/git.git"
+    return 0
+  fi
+
+  fail "git over HTTPS failed: github.com/git/git.git"
+  return 1
+}
+
+basic_network_check() {
+  local failed=0
+
+  if dig +time=3 +tries=1 example.com >/dev/null 2>&1 || nslookup example.com >/dev/null 2>&1; then
+    ok "DNS works through current macOS resolver."
+  else
+    fail "DNS failed through current macOS resolver."
+    failed=1
+  fi
+
+  check_https_endpoint "Chrome/web" "https://www.google.com/generate_204" || failed=1
+  check_https_endpoint "Discord gateway API" "https://discord.com/api/v10/gateway" || failed=1
+  check_tcp_endpoint "Discord gateway" "gateway.discord.gg" 443 || failed=1
+  check_https_endpoint "Kakao" "https://talk.kakao.com" || failed=1
+  check_tcp_endpoint "Kakao" "talk.kakao.com" 443 || failed=1
+  check_reachability_endpoint "KakaoTalk" "talk.kakao.com" || failed=1
+  check_git_endpoint || failed=1
+
+  return "$failed"
+}
+
+system_recover_command() {
+  say ""
+  require_macos
+  ensure_state_dir
+
+  info "Recovering normal Mac networking."
+  ensure_admin_if_interactive >/dev/null 2>&1 || true
+  delete_manual_tun_routes
+  disable_dynamic_local_dns
+  if ! restore_system_dns; then
+    warn "DNS restore from backup failed; stale local DNS repair was attempted."
+  fi
+  stop_sing_box_processes
+  relay_stop_command || true
+  proxy_stop_command || true
+  dscacheutil -flushcache >/dev/null 2>&1 || true
+
+  say ""
+  if dns_servers_are_local_only "$(dns_servers_for_service Wi-Fi)"; then
+    fail "Recovery failed: Wi-Fi DNS is still local-only."
+    return 1
+  fi
+  if netstat -rn -f inet | awk '$1 == "1" || $1 == "1.0.0.0/8" || $1 == "128.0/1" {print}' | grep -q "$TUN_GATEWAY"; then
+    fail "Recovery failed: TUN split routes are still present."
+    return 1
+  fi
+  if quick_internet_check; then
+    ok "Recovery check passed."
+  else
+    warn "Recovery completed, but normal internet is not currently reachable."
+    warn "If Wi-Fi is intentionally disconnected, this is expected."
+  fi
+}
+
+app_check_command() {
+  local failed=0
+
+  say "${BOLD}${APP_NAME} app-check${RESET}"
+  say ""
+  say "Completion indicators:"
+  say "  - Chrome/web: HTTPS endpoint reachable"
+  say "  - Discord: gateway HTTPS/TCP reachable"
+  say "  - KakaoTalk: Kakao HTTPS/TCP reachable and macOS reachability reports online"
+  say "  - git: real git ls-remote over HTTPS succeeds"
+  say ""
+
+  basic_network_check || failed=1
+
+  say ""
+  if (( failed )); then
+    fail "App connectivity check failed."
+    say "If system mode was already running before the latest fix, restart it with './jam-usb-internet system-stop' and './jam-usb-internet system'."
+    say "If normal Wi-Fi stays broken after stopping, run './jam-usb-internet system-recover'."
+    return 1
+  fi
+
+  ok "App connectivity check passed."
+  warn "Discord voice/video may still need UDP; this prototype currently targets TCP/DNS app connectivity."
+}
+
+system_status_command() {
+  require_macos
+
+  say "${BOLD}${APP_NAME} system-status${RESET}"
+  say ""
+
+  say "Processes:"
+  pgrep -fl "sing-box|knock-relay|adb-socks-proxy" || say "  none"
+  say ""
+
+  say "ADB devices:"
+  if start_adb_if_available; then
+    adb_cmd devices || true
+  else
+    say "  adb not found"
+  fi
+  say ""
+
+  say "ADB forwards:"
+  if start_adb_if_available; then
+    adb_cmd forward --list || true
+  else
+    say "  adb not found"
+  fi
+  say ""
+
+  say "Android relay:"
+  if start_adb_if_available && select_adb_device_now; then
+    adb_shell "if [ -e '${RELAY_REMOTE_PATH}' ]; then ls -l '${RELAY_REMOTE_PATH}'; else echo 'file: not installed'; fi; pid=\$(pidof knock-relay 2>/dev/null || true); if [ -n \"\$pid\" ]; then echo \"process: running pid \$pid\"; ps -A | grep knock-relay || true; else echo 'process: not running'; fi; if [ -f '${RELAY_REMOTE_LOG}' ]; then echo 'recent log:'; tail -10 '${RELAY_REMOTE_LOG}'; else echo 'recent log: none'; fi"
+  else
+    say "  no authorized ADB device"
+  fi
+  say ""
+
+  say "Temporary DNS resolver:"
+  scutil --dns 2>/dev/null | awk '
+    /nameserver\[[0-9]+\] : 127\.0\.0\.1/ { found = 1 }
+    END { if (found) print "  active: 127.0.0.1"; else print "  inactive" }
+  '
+  say ""
+
+  say "Route to 1.1.1.1:"
+  route -n get 1.1.1.1 2>/dev/null | sed -n '1,18p' || true
+  say ""
+
+  say "IPv4 routes:"
+  netstat -rn -f inet | sed -n '1,80p'
+}
+
+status_command() {
+  local adb_path
+
+  require_macos
+  say "${BOLD}${APP_NAME} status${RESET}"
+  say "Mac: $(sw_vers -productName) $(sw_vers -productVersion) ($(uname -m))"
+  say ""
+
+  if adb_path="$(find_adb)"; then
+    say "ADB: $adb_path"
+    "$adb_path" devices 2>/dev/null || true
+  else
+    say "ADB: not found"
+  fi
+
+  say ""
+  print_usb_hint
+
+  say ""
+  say "Network service order:"
+  networksetup -listnetworkserviceorder 2>/dev/null || true
+
+  say ""
+  connectivity_check || true
+}
+
+doctor_command() {
+  local adb_path os_version arch
+
+  require_macos
+  os_version="$(sw_vers -productVersion)"
+  arch="$(uname -m)"
+
+  say "${BOLD}${APP_NAME} doctor${RESET}"
+  say "Mac: macOS ${os_version}, ${arch}"
+
+  if adb_path="$(find_adb)"; then
+    ok "ADB found: $adb_path"
+  else
+    warn "ADB not found. Install with: brew install android-platform-tools"
+  fi
+
+  if [[ "$arch" == "arm64" ]]; then
+    warn "Apple Silicon Mac detected. Native Android RNDIS USB tethering is often not exposed by modern macOS."
+  fi
+
+  say ""
+  say "Phone prep checklist:"
+  say "  - Use a USB data cable, not a charge-only cable."
+  say "  - Unlock Galaxy Note 9."
+  say "  - Turn on mobile data."
+  say "  - Set USB mode to File Transfer / Android Auto."
+  say "  - Enable USB debugging and authorize this Mac."
+  say "  - Keep USB tethering off for system mode."
+  say ""
+  say "Run:"
+  say "  ./jam-usb-internet browser --mobile-only"
+  say ""
+  say "Mac-wide TUN mode check:"
+  say "  ./jam-usb-internet system --mobile-only --check-only"
+  say ""
+  say "Mac-wide TUN mode:"
+  say "  ./jam-usb-internet system --mobile-only"
+  say ""
+  say "System proxy mode, for apps that honor macOS network proxies:"
+  say "  ./jam-usb-internet proxy --mobile-only"
+  say ""
+  say "Relay lifecycle:"
+  say "  ./jam-usb-internet relay-install"
+  say "  ./jam-usb-internet relay-start"
+  say "  ./jam-usb-internet relay-stop"
+  say ""
+  say "Native USB tethering can still be tested with:"
+  say "  ./jam-usb-internet connect --mobile-only"
+}
+
+restore_command() {
+  local -a services
+  local output rc
+
+  require_macos
+  if [[ ! -s "$ORDER_BACKUP" ]]; then
+    warn "No saved network service order found at $ORDER_BACKUP"
+    return 1
+  fi
+
+  services=("${(@f)$(< "$ORDER_BACKUP")}")
+  if (( ${#services[@]} == 0 )); then
+    fail "Saved service order is empty."
+    return 1
+  fi
+
+  output="$(networksetup -ordernetworkservices "${services[@]}" 2>&1)"
+  rc=$?
+  if (( rc == 0 )); then
+    ok "Restored network service order from $ORDER_BACKUP"
+  else
+    fail "Could not restore network service order."
+    debug "$output"
+    return "$rc"
+  fi
+}
+
+main() {
+  parse_args "$@"
+
+  case "$COMMAND" in
+    connect)
+      connect_command
+      ;;
+    proxy)
+      proxy_command
+      ;;
+    browser)
+      browser_command
+      ;;
+    relay-install)
+      relay_install_command
+      ;;
+    relay-start)
+      relay_start_command
+      ;;
+    relay-stop)
+      relay_stop_command
+      ;;
+    relay-clean)
+      relay_clean_command
+      ;;
+    system)
+      system_command
+      ;;
+    system-stop)
+      system_stop_command
+      ;;
+    system-recover|recover-network|recover)
+      system_recover_command
+      ;;
+    system-status)
+      system_status_command
+      ;;
+    app-check)
+      app_check_command
+      ;;
+    proxy-stop)
+      proxy_stop_command
+      ;;
+    status)
+      status_command
+      ;;
+    doctor)
+      doctor_command
+      ;;
+    restore)
+      restore_command
+      ;;
+    help)
+      usage
+      ;;
+    *)
+      fail "Unknown command: $COMMAND"
+      usage
+      exit 2
+      ;;
+  esac
+}
+
+main "$@"
