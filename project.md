@@ -588,6 +588,56 @@ Required absence:
 Temporary default route verification failed for utunX
 ```
 
+### Session 8: 2026-05-30 Git and GitHub Project Start
+
+User request:
+
+```text
+이제부터 깃으로 관리하고 깃헙에도 올리자.
+레포 이름은 jam_usb_internet-system_mac-android.
+```
+
+Implemented:
+
+- Initialized local git repository in:
+
+  ```text
+  /Users/twentyflags/twentyflags/knocklab/tools/jam-usb-internet
+  ```
+
+- Created `.gitignore`.
+- Added `project.md`.
+- Added `plan.md`.
+- Created initial commit:
+
+  ```text
+  c8a408a Initial jam USB internet system prototype
+  ```
+
+- Created GitHub repository:
+
+  ```text
+  https://github.com/atozwizard/jam_usb_internet-system_mac-android
+  ```
+
+Repository visibility:
+
+```text
+PRIVATE
+```
+
+Git remote:
+
+```text
+origin https://github.com/atozwizard/jam_usb_internet-system_mac-android.git
+```
+
+Current branch:
+
+```text
+main
+```
+
 ## 10. Current Known State
 
 Known working:
