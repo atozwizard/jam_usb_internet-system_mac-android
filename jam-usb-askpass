@@ -2,10 +2,35 @@
 #
 # SUDO_ASKPASS helper for jam-usb-internet GUI launches (no TTY).
 # Prints the administrator password on stdout for sudo -A.
+# Caches the password briefly in JAM_USB_STATE_DIR so one dialog covers
+# many privileged steps (route, scutil, networksetup, launchctl).
 
 set -u
 
-/usr/bin/osascript <<'APPLESCRIPT'
+STATE_DIR="${JAM_USB_STATE_DIR:-$HOME/.jam-usb-internet}"
+CACHE="${STATE_DIR}/.sudo-askpass-cache"
+MAX_AGE=600
+
+read_cached_password() {
+  [[ -s "$CACHE" ]] || return 1
+  local mtime now age
+  mtime="$(stat -f %m "$CACHE" 2>/dev/null || return 1)"
+  now="$(date +%s)"
+  age=$(( now - mtime ))
+  if (( age >= MAX_AGE )); then
+    rm -f "$CACHE"
+    return 1
+  fi
+  chmod 600 "$CACHE" 2>/dev/null || true
+  cat "$CACHE"
+}
+
+if pw="$(read_cached_password)"; then
+  print -r -- "$pw"
+  exit 0
+fi
+
+pw="$(/usr/bin/osascript <<'APPLESCRIPT'
 on run
   try
     set theAnswer to display dialog "jam-usb-internet needs your administrator password:" default answer "" with hidden answer with title "Administrator Password" buttons {"Cancel", "OK"} default button "OK"
@@ -15,3 +40,14 @@ on run
   end try
 end run
 APPLESCRIPT
+)"
+
+if [[ -z "$pw" ]]; then
+  exit 1
+fi
+
+mkdir -p "$STATE_DIR" 2>/dev/null || true
+umask 077
+print -r -- "$pw" > "$CACHE"
+chmod 600 "$CACHE" 2>/dev/null || true
+print -r -- "$pw"

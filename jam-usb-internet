@@ -238,6 +238,10 @@ jam_usb_export_askpass() {
   fi
 }
 
+clear_sudo_askpass_cache() {
+  rm -f "${STATE_DIR}/.sudo-askpass-cache"
+}
+
 usage() {
   cat <<'EOF'
 jam-usb-internet
@@ -1135,7 +1139,7 @@ repair_stale_local_socks_proxy() {
     if [[ "$enabled" == "Yes" && "$server" == "$PROXY_HOST" && ( "$port" == "$PROXY_PORT" || "$port" == "$RELAY_MAC_PORT" ) ]]; then
       warn "Detected stale local SOCKS proxy on '$service'; turning it off."
       networksetup -setsocksfirewallproxystate "$service" off >/dev/null 2>&1 ||
-        sudo -n networksetup -setsocksfirewallproxystate "$service" off >/dev/null 2>&1 || true
+        run_privileged networksetup -setsocksfirewallproxystate "$service" off >/dev/null 2>&1 || true
       repaired=1
     fi
   done < <(all_network_services)
@@ -1161,25 +1165,14 @@ set_dns_servers_for_service() {
     return "$rc"
   fi
 
-  output="$(sudo -n networksetup -setdnsservers "$service" "$@" 2>&1)"
+  output="$(run_privileged networksetup -setdnsservers "$service" "$@" 2>&1)"
   rc=$?
   if (( rc == 0 )); then
     return 0
   fi
 
-  if [[ -t 0 ]]; then
-    sudo networksetup -setdnsservers "$service" "$@"
-    rc=$?
-    if (( rc == 0 )); then
-      return 0
-    fi
-
-    warn "Could not set DNS on '$service' with sudo."
-    return "$rc"
-  fi
-
   warn "Could not set DNS on '$service': $output"
-  return 1
+  return "$rc"
 }
 
 dns_servers_for_service() {
@@ -1329,13 +1322,14 @@ run_scutil_as_root() {
   if (( EUID == 0 )); then
     scutil
   else
-    sudo -n scutil
+    run_privileged scutil
   fi
 }
 
 enable_dynamic_local_dns() {
   local output rc
 
+  setopt localoptions pipefail
   output="$({
       print -r -- "d.init"
       print -r -- "d.add ServerAddresses * 127.0.0.1"
@@ -1360,6 +1354,7 @@ enable_dynamic_local_dns() {
 disable_dynamic_local_dns() {
   local output
 
+  setopt localoptions pipefail
   output="$({
       print -r -- "remove ${DYNAMIC_DNS_KEY}"
       print -r -- "quit"
@@ -1692,8 +1687,7 @@ stop_sing_box_processes() {
   if [[ -s "$SING_BOX_PID_FILE" ]]; then
     pid="$(< "$SING_BOX_PID_FILE")"
     if [[ -n "$pid" ]]; then
-      kill "$pid" >/dev/null 2>&1 || true
-      sudo -n kill "$pid" >/dev/null 2>&1 || true
+      kill "$pid" >/dev/null 2>&1 || run_privileged kill "$pid" >/dev/null 2>&1 || true
     fi
     rm -f "$SING_BOX_PID_FILE"
   fi
@@ -1702,8 +1696,7 @@ stop_sing_box_processes() {
     [[ -z "$pid" ]] && continue
     args="$(ps -p "$pid" -o command= 2>/dev/null || true)"
     [[ "$args" == *"$SING_BOX_CONFIG"* ]] || continue
-    kill "$pid" >/dev/null 2>&1 || true
-    sudo -n kill "$pid" >/dev/null 2>&1 || true
+    kill "$pid" >/dev/null 2>&1 || run_privileged kill "$pid" >/dev/null 2>&1 || true
   done < <(pgrep -x sing-box 2>/dev/null || true)
 }
 
@@ -1752,7 +1745,6 @@ start_sing_box_engine() {
     if real_pid="$(sing_box_pid_for_config)"; then
       print -r -- "$real_pid" > "$SING_BOX_PID_FILE"
       ok "Started sing-box (pid ${real_pid}). Log: $SING_BOX_LOG"
-      print -r -- "$real_pid"
       return 0
     fi
     sleep 0.25
@@ -1761,6 +1753,28 @@ start_sing_box_engine() {
   print_sing_box_log_tail
   fail "sing-box did not stay running."
   return 1
+}
+
+wait_for_process_exit() {
+  local pid="$1"
+
+  [[ -n "$pid" ]] || return 0
+  while process_is_running "$pid"; do
+    sleep 1
+  done
+}
+
+process_is_running() {
+  local pid="$1"
+
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  ps -p "$pid" >/dev/null 2>&1
+}
+
+wait_for_sing_box_exit() {
+  while sing_box_pid_for_config >/dev/null 2>&1; do
+    sleep 1
+  done
 }
 
 preclean_system_mode() {
@@ -1905,7 +1919,7 @@ remove_guard_launchctl_label() {
 
   [[ -n "$label" ]] || return 0
   launchctl remove "$label" >/dev/null 2>&1 || true
-  sudo -n launchctl remove "$label" >/dev/null 2>&1 || true
+  run_privileged launchctl remove "$label" >/dev/null 2>&1 || true
 }
 
 remove_stale_guard_jobs() {
@@ -1917,7 +1931,7 @@ remove_stale_guard_jobs() {
   done < <(
     {
       launchctl list 2>/dev/null || true
-      sudo -n launchctl list 2>/dev/null || true
+      run_privileged launchctl list 2>/dev/null || true
     } | awk '/com\.atozwizard\.jam-usb-internet\.guard\./ {print $3}' | sort -u
   )
 }
@@ -1955,7 +1969,7 @@ start_system_guard() {
         >> "$SYSTEM_GUARD_LOG" 2>&1 &
       launcher_pid=$!
     else
-      sudo -n env JAM_USB_STATE_DIR="$STATE_DIR" nohup "$SCRIPT_DIR/jam-usb-internet" system-guard \
+      run_privileged env JAM_USB_STATE_DIR="$STATE_DIR" nohup "$SCRIPT_DIR/jam-usb-internet" system-guard \
         --guard-parent-pid "$parent_pid" \
         --guard-token "$token" \
         >> "$SYSTEM_GUARD_LOG" 2>&1 &
@@ -1999,7 +2013,7 @@ disarm_system_guard() {
   if [[ -s "$SYSTEM_GUARD_PID_FILE" ]]; then
     guard_pid="$(< "$SYSTEM_GUARD_PID_FILE")"
     if [[ -n "$guard_pid" && "$guard_pid" != "$$" ]]; then
-      kill "$guard_pid" >/dev/null 2>&1 || sudo -n kill "$guard_pid" >/dev/null 2>&1 || true
+      kill "$guard_pid" >/dev/null 2>&1 || run_privileged kill "$guard_pid" >/dev/null 2>&1 || true
     fi
     rm -f "$SYSTEM_GUARD_PID_FILE"
   fi
@@ -2049,10 +2063,9 @@ system_guard_command() {
 }
 
 monitor_phone_relay() {
-  local sing_box_pid="$1"
   local failures=0
 
-  while kill -0 "$sing_box_pid" >/dev/null 2>&1; do
+  while sing_box_pid_for_config >/dev/null 2>&1; do
     sleep 5
     if phone_relay_health_check; then
       failures=0
@@ -2063,7 +2076,7 @@ monitor_phone_relay() {
     warn "Phone relay health check failed (${failures}/2)."
     if (( failures >= 2 )); then
       warn "Phone internet path appears down; stopping USB TUN so normal Mac networking can recover."
-      kill "$sing_box_pid" >/dev/null 2>&1 || true
+      stop_sing_box_processes
       return 0
     fi
   done
@@ -2104,12 +2117,12 @@ install_tun_default_route() {
     return 0
   fi
 
-  output="$(sudo -n route -n change default "$TUN_GATEWAY" 2>&1)"
+  output="$(run_privileged route -n change default "$TUN_GATEWAY" 2>&1)"
   rc=$?
   if (( rc != 0 )); then
     debug "route change default failed: $output"
-    sudo -n route -n delete default >/dev/null 2>&1 || true
-    output="$(sudo -n route -n add default "$TUN_GATEWAY" 2>&1)"
+    run_privileged route -n delete default >/dev/null 2>&1 || true
+    output="$(run_privileged route -n add default "$TUN_GATEWAY" 2>&1)"
     rc=$?
   fi
 
@@ -2121,7 +2134,7 @@ install_tun_default_route() {
   if ! route -n get default 2>/dev/null | grep -q "interface: ${tun_if}"; then
     current_route="$(route -n get default 2>&1 | paste -sd ' ' -)"
     warn "Temporary default route verification failed for ${tun_if}: ${current_route}"
-    output="$(sudo -n route -n add default -interface "$tun_if" 2>&1)"
+    output="$(run_privileged route -n add default -interface "$tun_if" 2>&1)"
     rc=$?
     if (( rc != 0 )) && [[ "$output" != *"File exists"* ]]; then
       debug "route add default interface failed: $output"
@@ -2140,8 +2153,8 @@ restore_default_route() {
 
   if [[ ! -s "$DEFAULT_ROUTE_BACKUP" ]]; then
     if [[ -n "$tun_if" ]] && route -n get default 2>/dev/null | grep -q "interface: ${tun_if}"; then
-      sudo -n route -n delete default "$TUN_GATEWAY" >/dev/null 2>&1 || true
-      sudo -n route -n delete default -interface "$tun_if" >/dev/null 2>&1 || true
+      run_privileged route -n delete default "$TUN_GATEWAY" >/dev/null 2>&1 || true
+      run_privileged route -n delete default -interface "$tun_if" >/dev/null 2>&1 || true
     fi
     return 0
   fi
@@ -2152,29 +2165,29 @@ restore_default_route() {
 
   if [[ "$gateway" == "__NONE__" && "$iface" == "__NONE__" ]]; then
     if [[ -n "$tun_if" ]] && route -n get default 2>/dev/null | grep -q "interface: ${tun_if}"; then
-      sudo -n route -n delete default "$TUN_GATEWAY" >/dev/null 2>&1 || true
-      sudo -n route -n delete default -interface "$tun_if" >/dev/null 2>&1 || true
+      run_privileged route -n delete default "$TUN_GATEWAY" >/dev/null 2>&1 || true
+      run_privileged route -n delete default -interface "$tun_if" >/dev/null 2>&1 || true
     fi
     rm -f "$DEFAULT_ROUTE_BACKUP"
     return 0
   fi
 
   if [[ "$gateway" != "__EMPTY__" ]]; then
-    output="$(sudo -n route -n change default "$gateway" 2>&1)"
+    output="$(run_privileged route -n change default "$gateway" 2>&1)"
     rc=$?
     if (( rc != 0 )); then
       debug "route change default restore failed: $output"
-      sudo -n route -n delete default >/dev/null 2>&1 || true
-      output="$(sudo -n route -n add default "$gateway" 2>&1)"
+      run_privileged route -n delete default >/dev/null 2>&1 || true
+      output="$(run_privileged route -n add default "$gateway" 2>&1)"
       rc=$?
     fi
   elif [[ "$iface" != "__EMPTY__" ]]; then
-    output="$(sudo -n route -n change default -interface "$iface" 2>&1)"
+    output="$(run_privileged route -n change default -interface "$iface" 2>&1)"
     rc=$?
     if (( rc != 0 )); then
       debug "route change default interface restore failed: $output"
-      sudo -n route -n delete default >/dev/null 2>&1 || true
-      output="$(sudo -n route -n add default -interface "$iface" 2>&1)"
+      run_privileged route -n delete default >/dev/null 2>&1 || true
+      output="$(run_privileged route -n add default -interface "$iface" 2>&1)"
       rc=$?
     fi
   else
@@ -2209,7 +2222,7 @@ install_manual_tun_routes() {
 
   while IFS= read -r prefix; do
     [[ -z "$prefix" ]] && continue
-    output="$(sudo -n route -n add -net "$prefix" -interface "$tun_if" 2>&1)"
+    output="$(run_privileged route -n add -net "$prefix" -interface "$tun_if" 2>&1)"
     rc=$?
     if (( rc != 0 )) && [[ "$output" != *"File exists"* ]]; then
       warn "Could not add route ${prefix} through ${tun_if}: $output"
@@ -2235,15 +2248,15 @@ delete_manual_tun_routes() {
   while IFS= read -r prefix; do
     [[ -z "$prefix" ]] && continue
     if [[ -n "$tun_if" ]]; then
-      sudo -n route -n delete -net "$prefix" -interface "$tun_if" >/dev/null 2>&1 || true
+      run_privileged route -n delete -net "$prefix" -interface "$tun_if" >/dev/null 2>&1 || true
     fi
-    sudo -n route -n delete -net "$prefix" >/dev/null 2>&1 || true
+    run_privileged route -n delete -net "$prefix" >/dev/null 2>&1 || true
   done < <(manual_route_prefixes)
 
   default_route="$(route -n get default 2>/dev/null || true)"
   if print -r -- "$default_route" | grep -q "gateway: ${TUN_GATEWAY}"; then
-    sudo -n route -n delete default "$TUN_GATEWAY" >/dev/null 2>&1 || true
-    sudo -n route -n delete default >/dev/null 2>&1 || true
+    run_privileged route -n delete default "$TUN_GATEWAY" >/dev/null 2>&1 || true
+    run_privileged route -n delete default >/dev/null 2>&1 || true
   fi
 }
 
@@ -2310,13 +2323,14 @@ system_mode_cleanup() {
   rm -f "$SING_BOX_PID_FILE"
   if [[ "$mode" == "normal" ]]; then
     disarm_system_guard
+    clear_sudo_askpass_cache
   else
     warn "Keeping cleanup guard active after abnormal terminal exit."
   fi
 }
 
 system_command() {
-  local sing_box_bin template sing_box_pid monitor_pid
+  local sing_box_bin template monitor_pid
 
   require_macos
   ensure_state_dir
@@ -2400,7 +2414,13 @@ system_command() {
     return 1
   fi
 
-  if ! sing_box_pid="$(start_sing_box_engine "$sing_box_bin")"; then
+  if ! start_sing_box_engine "$sing_box_bin"; then
+    system_mode_cleanup
+    return 1
+  fi
+
+  if [[ ! -s "$SING_BOX_PID_FILE" ]]; then
+    fail "sing-box pid file missing after start."
     system_mode_cleanup
     return 1
   fi
@@ -2440,9 +2460,9 @@ system_command() {
   fi
 
   ok "System mode is running. Test with: curl https://example.com"
-  monitor_phone_relay "$sing_box_pid" &
+  monitor_phone_relay &
   monitor_pid=$!
-  wait "$sing_box_pid"
+  wait_for_sing_box_exit
   kill "$monitor_pid" >/dev/null 2>&1 || true
 }
 
