@@ -613,7 +613,7 @@ Implemented:
 - Created initial commit:
 
   ```text
-  c8a408a Initial jam USB internet system prototype
+  961e73a Initial jam USB internet system prototype
   ```
 
 - Created GitHub repository:
@@ -672,6 +672,11 @@ Existing local commits were rewritten so author and committer are both:
 ```text
 atozwizard <251137756+atozwizard@users.noreply.github.com>
 ```
+
+Remote correction:
+
+- Rewritten history was pushed to GitHub with `--force-with-lease`.
+- Remote `main` now uses the `atozwizard` author/committer identity.
 
 Latest target-condition log:
 

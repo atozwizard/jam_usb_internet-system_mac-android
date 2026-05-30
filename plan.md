@@ -582,7 +582,7 @@ Completed initial commit after:
 Initial commit:
 
 ```text
-c8a408a Initial jam USB internet system prototype
+961e73a Initial jam USB internet system prototype
 ```
 
 ### 12.4 GitHub Plan
@@ -630,11 +630,13 @@ user.email=251137756+atozwizard@users.noreply.github.com
 
 Existing local commits were rewritten so both author and committer use that identity.
 
-Required publish step after the rewrite:
+Completed publish step after the rewrite:
 
 ```zsh
 git push --force-with-lease origin main
 ```
+
+Remote `main` now points to the rewritten author history.
 
 ## 13. Current Immediate Work Queue
 
@@ -657,7 +659,7 @@ git push --force-with-lease origin main
 
 1. Keep local author identity as `atozwizard`.
 2. Commit latest route/reachability behavior patch.
-3. Force-push rewritten author history safely with `--force-with-lease`.
+3. Push normally after the author-history force push.
 4. Verify remote repository metadata.
 
 ### 13.4 User Validation
