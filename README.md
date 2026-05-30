@@ -37,7 +37,7 @@ To stop system mode, open:
 /Users/twentyflags/twentyflags/knocklab/tools/jam-usb-internet/Galaxy System Stop.command
 ```
 
-Do this before closing the system-mode terminal window whenever possible. Closing the window usually triggers cleanup, but the explicit stop command is safer because system mode temporarily changes routes and DNS.
+Do this before closing the system-mode terminal window whenever possible. Closing the window starts an abnormal-exit cleanup guard, but the explicit stop command is still safer because system mode temporarily changes routes and DNS.
 
 ## Phone Setup
 
@@ -98,6 +98,12 @@ To inspect or stop:
 `system-recover` is the stronger panic button: it stops TUN/proxy/relay state, repairs stale DNS, and then checks Chrome-style HTTPS, Discord, Kakao, and git connectivity.
 `system --check-only` does not start the privileged TUN. It uploads the Android relay, starts the ADB forward, and checks Chrome/web, Discord, Kakao, and git-style HTTPS through the relay. If this fails, the blocker is Android relay/phone internet/DNS, not Mac TUN routing.
 
+Abnormal close behavior:
+
+- `system` starts a cleanup guard before modifying TUN routes or DNS.
+- If the system-mode terminal is force-closed, the guard should notice that the main session disappeared and run recovery automatically.
+- If normal Wi-Fi still does not work a few seconds after a forced close, run `Galaxy System Stop.command` or `./jam-usb-internet system-recover`.
+
 Safe stop rule:
 
 ```zsh
@@ -129,7 +135,7 @@ If native USB tethering is blocked on your Mac, use `system --mobile-only` for M
 
 If `sing-box` prints `network: missing default interface`, the tool now keeps going: it waits for the TUN address, adds split IPv4 routes manually, and uses local DNS hijacking so disconnected Wi-Fi does not have to provide DNS.
 
-Safety note: full system mode fails closed for relay, DNS, and split-route failures. It starts `sing-box`, verifies that `127.0.0.1` can answer DNS, verifies that macOS is using the temporary resolver, and verifies the TUN split route before startup checks. A temporary default-route verification failure is allowed as a warning because split routes can still carry Chrome, Discord, git, and general TCP/DNS traffic. KakaoTalk reachability remains a strict completion check in `app-check`.
+Safety note: full system mode fails closed for relay, DNS, split-route, and cleanup-guard startup failures. It starts `sing-box`, verifies that `127.0.0.1` can answer DNS, verifies that macOS is using the temporary resolver, and verifies the TUN split route before startup checks. A temporary default-route verification failure is allowed as a warning because split routes can still carry Chrome, Discord, git, KakaoTalk, and general TCP/DNS traffic. KakaoTalk reachability remains a strict completion check in `app-check`.
 
 Priority rule: Mac Wi-Fi wins. USB TUN is a fallback for when the Mac itself has no working internet. Use `--force-tun` only for deliberate USB-path testing.
 

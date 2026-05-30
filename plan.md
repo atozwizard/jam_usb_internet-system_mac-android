@@ -245,9 +245,9 @@ Important distinction:
 - `system` startup must keep a usable TCP/DNS tunnel alive when Chrome, Discord, and git checks pass.
 - `app-check` remains the strict completion check and includes KakaoTalk/macOS reachability.
 
-### 7.4 Current Block
+### 7.4 Resolved Route/Reachability Block
 
-Failure in target condition:
+Previous failure in target condition:
 
 ```text
 Mac Wi-Fi: off
@@ -267,6 +267,13 @@ Interpretation:
 - macOS default route / reachability path does not verify against `utun4`.
 - KakaoTalk likely remains offline because reachability does not see the path as online.
 - The previous startup logic was too strict because it cleaned up after a default-route warning even when split-route TCP/DNS could still work.
+
+User validation after the nonfatal route patch:
+
+```text
+Mac Wi-Fi off + Galaxy Wi-Fi connected: internet works, KakaoTalk works.
+Mac Wi-Fi off + Galaxy LTE connected: internet works, KakaoTalk works.
+```
 
 ### 7.5 Current Patch
 
@@ -302,37 +309,38 @@ Purpose:
 - Keep the already-working USB TCP/DNS tunnel alive for real use and further diagnosis.
 - Avoid throwing away Chrome/Discord/git connectivity because one reachability layer is incomplete.
 
-### 7.6 Next Validation
+### 7.6 Current Validation Status
 
-Test with Mac Wi-Fi off and Galaxy Wi-Fi connected:
-
-```zsh
-./jam-usb-internet system
-```
-
-Expected:
+Validated by user with:
 
 ```text
-[ok] IPv4 route verification passed through utunX.
-[ok] DNS works through current macOS resolver.
-[ok] Chrome/web HTTPS reachable
-[ok] Discord gateway API HTTPS reachable
-[ok] git over HTTPS reachable
+Mac Wi-Fi off
+Galaxy Wi-Fi connected
+USB/ADB connected
 ```
 
-Then:
+Validated by user with:
+
+```text
+Mac Wi-Fi off
+Galaxy LTE connected
+USB/ADB connected
+```
+
+Passed outcomes:
+
+- Internet works.
+- KakaoTalk works.
+
+Remaining validation:
 
 ```zsh
 ./jam-usb-internet app-check
 ```
 
-Expected:
+and abnormal-close recovery.
 
-```text
-[ok] KakaoTalk macOS reachability: talk.kakao.com (Reachable)
-```
-
-If `system` stays up but `app-check` fails only at KakaoTalk reachability, the next task is route/reachability repair rather than Android relay repair.
+If `app-check` passes while system mode is active, the TCP/DNS app milestone is complete.
 
 ## 8. Stage 5: Route, DNS, and Reachability Reliability
 
@@ -408,6 +416,7 @@ Must:
 - Stop `sing-box`.
 - Stop Android relay.
 - Remove ADB forward.
+- Disarm the abnormal-exit cleanup guard after cleanup completes.
 
 ### 9.2 Strong Recovery
 
@@ -423,8 +432,24 @@ Must:
 - Stop SOCKS proxy mode too.
 - Repair stale DNS.
 - Check normal internet if Wi-Fi is connected.
+- Disarm any stale cleanup guard.
 
-### 9.3 Documentation
+### 9.3 Abnormal Exit Guard
+
+Current implementation:
+
+- `system` starts a cleanup guard before modifying TUN routes or DNS.
+- The guard runs with administrator privileges so it can recover routes/DNS without a terminal prompt.
+- The guard monitors the main system-mode process.
+- If the main process disappears without normal disarm, the guard runs recovery cleanup automatically.
+- `system-status` reports guard pid, session state, and log path.
+
+Current validation state:
+
+- Unit-style disarm test passed with a temporary state directory.
+- Field validation still needed by force-closing an active system-mode terminal.
+
+### 9.4 Documentation
 
 README now includes safe stop rule:
 
@@ -438,8 +463,9 @@ and fallback:
 ./jam-usb-internet system-recover
 ```
 
-### 9.4 Remaining Work
+### 9.5 Remaining Work
 
+- Field-test forced terminal close with guard enabled.
 - Add on/off `.command` naming once behavior is stable.
 - Make command windows less scary for non-technical use.
 
@@ -494,15 +520,14 @@ app-check passes.
 In Mac Wi-Fi-off target state:
 
 ```text
-relay checks pass; TUN starts; split routes pass; default route verification can fail.
+internet works through Galaxy Wi-Fi and Galaxy LTE; KakaoTalk works.
 ```
 
 ### 10.4 Remaining Work
 
-- Re-test after nonfatal default route patch.
-- Confirm system mode remains running when default route verification fails but split routes pass.
-- Confirm KakaoTalk app itself can send/receive.
-- Confirm Discord text/API path.
+- Confirm `app-check` while system mode is active in the target state.
+- Confirm Discord text/API path during the same target-state run.
+- Field-test abnormal-close cleanup guard.
 - Defer Discord voice/video until UDP strategy exists.
 
 ## 11. Stage 8: Packaging
@@ -513,7 +538,8 @@ Do not package yet.
 
 Reason:
 
-- System mode still fails in target Mac Wi-Fi-off condition.
+- System mode now works in target Mac Wi-Fi-off conditions.
+- Abnormal-close cleanup must be field-validated before packaging.
 
 ### 11.2 First Packaging Step
 
@@ -642,11 +668,11 @@ Remote `main` now points to the rewritten author history.
 
 ### 13.1 Code
 
-1. Keep default route installation as gateway `172.19.0.1`.
-2. Keep previous default route backup/restore.
-3. Treat default route verification failure as warning-only during `system` startup.
+1. Keep cleanup guard active for `system` mode.
+2. Verify forced-close recovery in a real system-mode run.
+3. Keep previous default route backup/restore.
 4. Keep KakaoTalk reachability strict in `app-check`.
-5. Verify syntax and config.
+5. Verify syntax and config after each change.
 
 ### 13.2 Docs
 
@@ -658,8 +684,8 @@ Remote `main` now points to the rewritten author history.
 ### 13.3 Git
 
 1. Keep local author identity as `atozwizard`.
-2. Commit latest route/reachability behavior patch.
-3. Push normally after the author-history force push.
+2. Commit latest cleanup guard patch.
+3. Push normally.
 4. Verify remote repository metadata.
 
 ### 13.4 User Validation
@@ -693,9 +719,8 @@ Expected:
 
 - relay check passes.
 - TUN starts.
-- default route points through `utunX`.
 - temporary DNS resolver active.
-- app-check passes.
+- internet works.
 - KakaoTalk app works.
 
 ### 14.3 Mac Wi-Fi Off, Galaxy LTE Connected
@@ -705,14 +730,22 @@ Expected:
 - same as Galaxy Wi-Fi path.
 - `--mobile-only` may be used to force phone LTE.
 
-### 14.4 Phone Internet Off, Mac Wi-Fi Connected
+### 14.4 Abnormal Close
+
+Expected:
+
+- Force-closing the system-mode terminal triggers cleanup guard.
+- Normal Mac Wi-Fi works after reconnecting Wi-Fi.
+- If guard fails, `system-recover` must restore normal internet.
+
+### 14.5 Phone Internet Off, Mac Wi-Fi Connected
 
 Expected:
 
 - normal Mac Wi-Fi remains usable.
 - system mode should not break Mac internet.
 
-### 14.5 Phone Internet Off, Mac Wi-Fi Off
+### 14.6 Phone Internet Off, Mac Wi-Fi Off
 
 Expected:
 

@@ -727,6 +727,68 @@ Reason for this change:
 - The immediate goal is to make USB internet usable first.
 - KakaoTalk reachability remains a completion blocker, but it should not prevent testing or using the already-working TCP/DNS path.
 
+### Session 10: 2026-05-30 Target Connectivity Passed, Abnormal Exit Recovery Fails
+
+User validation result:
+
+```text
+Mac Wi-Fi off
+Galaxy Wi-Fi connected
+Internet works
+KakaoTalk works
+```
+
+User validation result:
+
+```text
+Mac Wi-Fi off
+Galaxy LTE connected
+Internet works
+KakaoTalk works
+```
+
+Normal stop result:
+
+```text
+Mac Wi-Fi on and connected
+Galaxy USB disconnected
+Normal Mac internet works only when system mode was stopped with system-stop
+```
+
+Failure found:
+
+```text
+If the system-mode session is closed abnormally, cleanup does not reliably run.
+Normal Mac internet can become unavailable until manual recovery.
+```
+
+Cause hypothesis:
+
+- Shell `trap ... EXIT/HUP` is not enough for all Terminal/window-kill paths.
+- A forced close can interrupt cleanup before route/DNS state is restored.
+- Previous startup preclean did not explicitly restore/delete manual TUN routes before stopping old `sing-box`.
+
+Patch applied:
+
+- Added a root cleanup guard process for `system` mode.
+- The guard starts before TUN routes or DNS are modified.
+- The guard monitors the main system-mode process.
+- If the main process disappears without a normal disarm, the guard runs recovery cleanup:
+  - restore/delete TUN routes
+  - remove temporary DNS resolver
+  - restore DNS backup or repair stale local DNS
+  - stop `sing-box`
+  - stop Android relay if possible
+- Normal cleanup disarms the guard after cleanup completes.
+- `preclean_system_mode` now restores routes before stopping old `sing-box`.
+- `system-status` now reports cleanup guard state and log path.
+
+Status after this session:
+
+- Primary connectivity milestone is met for Galaxy Wi-Fi and LTE.
+- Normal stop path works.
+- Abnormal close recovery has code support and needs field validation by force-closing a system-mode window.
+
 ## 10. Current Known State
 
 Known working:
@@ -743,97 +805,80 @@ Known working:
 - Normal Wi-Fi recovery state.
 - `app-check` on normal Wi-Fi.
 - Local Git author config is now `atozwizard`.
+- Mac Wi-Fi off + Galaxy Wi-Fi connected: internet works, KakaoTalk works.
+- Mac Wi-Fi off + Galaxy LTE connected: internet works, KakaoTalk works.
+- Mac Wi-Fi connected + Galaxy disconnected: normal Mac internet works after `system-stop`.
 
 Known failing:
 
-- Temporary default route verification can fail when Mac Wi-Fi is off.
-- KakaoTalk/macOS reachability may report `Not Reachable` even when TCP/HTTPS works.
-- Target-condition system-mode validation is still pending after the nonfatal route patch.
+- Abnormal terminal/window close can leave Mac networking unrecovered in the pre-guard build.
+- Cleanup guard behavior after forced close is implemented but still needs field validation.
 
 ## 11. Current Blockers
 
-### Blocker A: TUN Default Route Verification
+### Blocker A: Abnormal Exit Recovery
 
 Symptom:
 
 ```text
-Temporary default route verification failed for utun4.
+Closing or killing the system-mode terminal without system-stop can leave normal Mac internet unavailable.
 ```
 
 Impact:
 
-- It may prevent macOS reachability from reporting online.
-- KakaoTalk may remain offline even when TCP/HTTPS works.
+- DNS/routes may remain in temporary TUN state.
+- User must run `system-recover` manually in affected cases.
 
 Current patch:
 
-- Switch default route installation to gateway `172.19.0.1`.
-- Improve diagnostic output.
-- Treat default route verification failure as warning-only if split routes pass.
-- Keep system mode running for TCP/DNS validation.
+- Add cleanup guard for abnormal system-mode exits.
+- Make guard refuse to start system mode if it cannot be launched.
+- Disarm guard only after normal cleanup is complete.
+- Make preclean restore route state before stopping old TUN engine.
 
 Required test:
 
-- Mac Wi-Fi off.
-- Galaxy Wi-Fi connected.
-- Run:
+- Start system mode with Mac Wi-Fi off and Galaxy internet connected.
+- Confirm internet and KakaoTalk work.
+- Force-close the system-mode terminal.
+- Wait several seconds.
+- Turn Mac Wi-Fi on and connect to normal Wi-Fi.
+- Confirm normal Mac internet works without manual `system-recover`.
 
-  ```zsh
-  ./jam-usb-internet system
-  ```
+Fallback if this test fails:
 
-Expected after latest patch:
+```zsh
+./jam-usb-internet system-recover
+```
+
+### Blocker B: Packaging Not Yet Started
+
+Packaging should wait until:
+
+- Abnormal close recovery is field-validated.
+- Stop/recover are proven.
+- The on/off UX is clear enough for daily use.
+
+### Closed Blockers
+
+#### TUN Default Route Verification
 
 ```text
 Temporary default route verification failed for utunX
 ```
 
-is allowed as a warning only if:
+Status:
+
+- No longer blocks startup if split routes pass.
+- User validated internet and KakaoTalk in target Wi-Fi-off Galaxy-Wi-Fi and Galaxy-LTE conditions.
+
+#### KakaoTalk macOS Reachability
+
+Status:
 
 ```text
-IPv4 route verification passed through utunX
-DNS works through current macOS resolver
-Chrome/web HTTPS reachable
-Discord gateway reachable
-git over HTTPS reachable
+KakaoTalk works in target Galaxy Wi-Fi and Galaxy LTE conditions.
 ```
-
-### Blocker B: KakaoTalk macOS Reachability
-
-Symptom:
-
-```text
-scutil -r talk.kakao.com
-```
-
-may return:
-
-```text
-Not Reachable
-```
-
-even though:
-
-- `https://talk.kakao.com` is reachable.
-- `talk.kakao.com:443` is reachable.
-
-Impact:
-
-- KakaoTalk may refuse to connect because it trusts macOS reachability before opening sockets.
-- This remains a completion blocker.
-
-Current handling:
-
-- `system` warns but keeps running.
-- `app-check` still fails until reachability reports reachable.
-
-### Blocker C: Packaging Not Yet Started
-
-Packaging should wait until:
-
-- System mode works in target conditions.
-- Stop/recover are proven.
-- KakaoTalk reachability passes.
 
 ## 12. Risk Register
 

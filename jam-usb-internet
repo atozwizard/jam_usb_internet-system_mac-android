@@ -10,9 +10,9 @@
 set -u
 
 APP_NAME="jam-usb-internet"
-VERSION="0.4.1"
+VERSION="0.4.2"
 SCRIPT_DIR="${0:a:h}"
-STATE_DIR="${HOME}/.jam-usb-internet"
+STATE_DIR="${JAM_USB_STATE_DIR:-${HOME}/.jam-usb-internet}"
 ORDER_BACKUP="${STATE_DIR}/network-services.before"
 SOCKS_BACKUP="${STATE_DIR}/socks-proxy.before"
 DNS_BACKUP="${STATE_DIR}/dns-servers.before"
@@ -24,6 +24,9 @@ RELAY_MAC_PORT=18080
 RELAY_DEVICE_PORT=18080
 SING_BOX_CONFIG="${STATE_DIR}/sing-box.system.json"
 SING_BOX_PID_FILE="${STATE_DIR}/sing-box.pid"
+SYSTEM_GUARD_PID_FILE="${STATE_DIR}/system-guard.pid"
+SYSTEM_SESSION_FILE="${STATE_DIR}/system-session"
+SYSTEM_GUARD_LOG="${STATE_DIR}/system-guard.log"
 TUN_GATEWAY="172.19.0.1"
 DYNAMIC_DNS_KEY="State:/Network/Service/jam-usb-internet/DNS"
 
@@ -42,6 +45,8 @@ PROXY_PORT=10808
 BROWSER_URL="https://example.com"
 CHECK_ONLY=0
 FORCE_TUN=0
+GUARD_PARENT_PID=""
+GUARD_TOKEN=""
 
 ADB_BIN=""
 ADB_SERIAL="${ANDROID_SERIAL:-}"
@@ -222,6 +227,22 @@ parse_args() {
         ;;
       --force-tun)
         FORCE_TUN=1
+        ;;
+      --guard-parent-pid)
+        shift
+        if (( $# == 0 )); then
+          fail "--guard-parent-pid needs a value."
+          exit 2
+        fi
+        GUARD_PARENT_PID="$1"
+        ;;
+      --guard-token)
+        shift
+        if (( $# == 0 )); then
+          fail "--guard-token needs a value."
+          exit 2
+        fi
+        GUARD_TOKEN="$1"
         ;;
       --no-system-proxy)
         SYSTEM_PROXY=0
@@ -1509,9 +1530,11 @@ stop_sing_box_processes() {
 
 preclean_system_mode() {
   info "Stopping any previous system-mode process before starting."
-  stop_sing_box_processes
+  disarm_system_guard
+  delete_manual_tun_routes
   disable_dynamic_local_dns
   restore_system_dns || true
+  stop_sing_box_processes
   if start_adb_if_available; then
     adb_cmd forward --remove "tcp:${RELAY_MAC_PORT}" >/dev/null 2>&1 || true
     if select_adb_device_now; then
@@ -1620,6 +1643,114 @@ relay_network_check() {
   check_relay_git_endpoint || failed=1
 
   return "$failed"
+}
+
+system_guard_session_matches() {
+  local expected_token="$1"
+  local line current_token
+
+  [[ -s "$SYSTEM_SESSION_FILE" ]] || return 1
+  line="$(< "$SYSTEM_SESSION_FILE")"
+  current_token="${line%%$'\t'*}"
+  [[ "$current_token" == "$expected_token" ]]
+}
+
+start_system_guard() {
+  local parent_pid token launcher_pid i guard_pid
+
+  ensure_state_dir
+  parent_pid="$$"
+  token="${parent_pid}-$(date +%s)-${RANDOM}"
+  print -r -- "$token"$'\t'"$parent_pid" > "$SYSTEM_SESSION_FILE"
+  touch "$SYSTEM_GUARD_LOG" >/dev/null 2>&1 || true
+  rm -f "$SYSTEM_GUARD_PID_FILE"
+
+  if (( EUID == 0 )); then
+    nohup "$SCRIPT_DIR/jam-usb-internet" system-guard \
+      --guard-parent-pid "$parent_pid" \
+      --guard-token "$token" \
+      >> "$SYSTEM_GUARD_LOG" 2>&1 &
+    launcher_pid=$!
+  else
+    sudo -n env JAM_USB_STATE_DIR="$STATE_DIR" nohup "$SCRIPT_DIR/jam-usb-internet" system-guard \
+      --guard-parent-pid "$parent_pid" \
+      --guard-token "$token" \
+      >> "$SYSTEM_GUARD_LOG" 2>&1 &
+    launcher_pid=$!
+  fi
+
+  for (( i = 1; i <= 20; i++ )); do
+    if [[ -s "$SYSTEM_GUARD_PID_FILE" ]]; then
+      guard_pid="$(< "$SYSTEM_GUARD_PID_FILE")"
+      ok "Started abnormal-exit cleanup guard (pid ${guard_pid})."
+      return 0
+    fi
+    if ! kill -0 "$launcher_pid" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.1
+  done
+
+  rm -f "$SYSTEM_SESSION_FILE"
+  warn "Could not start abnormal-exit cleanup guard. See: $SYSTEM_GUARD_LOG"
+  return 1
+}
+
+disarm_system_guard() {
+  local guard_pid
+
+  rm -f "$SYSTEM_SESSION_FILE"
+  if [[ -s "$SYSTEM_GUARD_PID_FILE" ]]; then
+    guard_pid="$(< "$SYSTEM_GUARD_PID_FILE")"
+    if [[ -n "$guard_pid" && "$guard_pid" != "$$" ]]; then
+      kill "$guard_pid" >/dev/null 2>&1 || sudo -n kill "$guard_pid" >/dev/null 2>&1 || true
+    fi
+    rm -f "$SYSTEM_GUARD_PID_FILE"
+  fi
+}
+
+system_guard_command() {
+  local parent_pid="$GUARD_PARENT_PID"
+  local token="$GUARD_TOKEN"
+
+  require_macos
+  ensure_state_dir
+
+  if [[ -z "$parent_pid" || -z "$token" ]]; then
+    fail "system-guard requires --guard-parent-pid and --guard-token."
+    return 2
+  fi
+
+  print -r -- "$$" > "$SYSTEM_GUARD_PID_FILE"
+  say "$(date '+%Y-%m-%d %H:%M:%S') cleanup guard started for parent ${parent_pid}"
+
+  while kill -0 "$parent_pid" >/dev/null 2>&1; do
+    if ! system_guard_session_matches "$token"; then
+      say "$(date '+%Y-%m-%d %H:%M:%S') cleanup guard disarmed"
+      rm -f "$SYSTEM_GUARD_PID_FILE"
+      return 0
+    fi
+    sleep 2
+  done
+
+  sleep 1
+  if ! system_guard_session_matches "$token"; then
+    say "$(date '+%Y-%m-%d %H:%M:%S') cleanup guard disarmed after parent exit"
+    rm -f "$SYSTEM_GUARD_PID_FILE"
+    return 0
+  fi
+
+  warn "System session exited without disarming cleanup guard; recovering normal networking."
+  delete_manual_tun_routes
+  disable_dynamic_local_dns
+  if ! restore_system_dns; then
+    warn "DNS restore failed in cleanup guard. Run './jam-usb-internet system-recover' after reopening Terminal."
+  fi
+  stop_sing_box_processes
+  relay_stop_command || true
+  dscacheutil -flushcache >/dev/null 2>&1 || true
+  rm -f "$SYSTEM_SESSION_FILE" "$SYSTEM_GUARD_PID_FILE"
+  ok "Cleanup guard finished."
 }
 
 monitor_phone_relay() {
@@ -1809,7 +1940,7 @@ delete_manual_tun_routes() {
 }
 
 system_command() {
-  local sing_box_bin template sing_box_pid monitor_pid
+  local sing_box_bin template sing_box_pid monitor_pid cleaned_up=0
 
   require_macos
   ensure_state_dir
@@ -1876,6 +2007,8 @@ system_command() {
   say ""
 
   cleanup_system() {
+    (( cleaned_up )) && return 0
+    cleaned_up=1
     delete_manual_tun_routes
     disable_dynamic_local_dns
     if ! restore_system_dns; then
@@ -1884,6 +2017,7 @@ system_command() {
     stop_sing_box_processes
     relay_stop_command || true
     rm -f "$SING_BOX_PID_FILE"
+    disarm_system_guard
   }
   trap 'cleanup_system' INT TERM HUP EXIT
 
@@ -1893,6 +2027,12 @@ system_command() {
       cleanup_system
       return 1
     }
+  fi
+
+  if ! start_system_guard; then
+    fail "Could not start abnormal-exit cleanup guard; refusing to modify TUN routes/DNS."
+    cleanup_system
+    return 1
   fi
 
   if (( EUID == 0 )); then
@@ -1953,6 +2093,7 @@ system_stop_command() {
   restore_system_dns || warn "DNS restore reported a problem. Try: ./jam-usb-internet system-recover"
   stop_sing_box_processes
   relay_stop_command || true
+  disarm_system_guard
   ok "System mode stop requested."
 }
 
@@ -2053,6 +2194,7 @@ system_recover_command() {
   stop_sing_box_processes
   relay_stop_command || true
   proxy_stop_command || true
+  disarm_system_guard
   dscacheutil -flushcache >/dev/null 2>&1 || true
 
   say ""
@@ -2137,6 +2279,20 @@ system_status_command() {
     /nameserver\[[0-9]+\] : 127\.0\.0\.1/ { found = 1 }
     END { if (found) print "  active: 127.0.0.1"; else print "  inactive" }
   '
+  say ""
+
+  say "Cleanup guard:"
+  if [[ -s "$SYSTEM_GUARD_PID_FILE" ]]; then
+    say "  pid: $(< "$SYSTEM_GUARD_PID_FILE")"
+  else
+    say "  pid: none"
+  fi
+  if [[ -s "$SYSTEM_SESSION_FILE" ]]; then
+    say "  session: active"
+  else
+    say "  session: none"
+  fi
+  say "  log: $SYSTEM_GUARD_LOG"
   say ""
 
   say "Route to 1.1.1.1:"
@@ -2286,6 +2442,9 @@ main() {
       ;;
     system-status)
       system_status_command
+      ;;
+    system-guard)
+      system_guard_command
       ;;
     app-check)
       app_check_command
