@@ -6,7 +6,8 @@ Date: 2026-05-30
 
 현재 패키징 방식은 설치형 macOS `.pkg`가 아니라 portable folder + zip 이다. 이 선택은 의도적이다.
 
-- 사용자는 폴더를 열고 `ON`, `OFF`, `RECOVER` 실행 파일을 직접 볼 수 있다.
+- 사용자는 `Jam USB Internet.app`으로 ON/OFF/RECOVER와 상태를 한 화면에서 다룬다.
+- `.command` fallback도 같은 폴더에 남긴다.
 - 아직 강제 터미널 종료 자동복구가 완전히 신뢰할 수준은 아니므로 `RECOVER`가 눈에 보여야 한다.
 - macOS 관리자 권한, ADB 승인, Galaxy USB 모드 같은 수동 확인 단계가 필요하다.
 - 코드 서명과 notarization 없이 설치형 `.pkg`를 만들면 오히려 보안 경고와 제거 경로가 불명확해질 수 있다.
@@ -34,6 +35,7 @@ pkg/dist/jam-usb-internet-<version>.zip.sha256
 
 배포 폴더에는 다음이 들어간다.
 
+- `Jam USB Internet.app`
 - `jam-usb-internet`
 - `Galaxy USB Internet ON.command`
 - `Galaxy USB Internet OFF.command`
@@ -62,15 +64,17 @@ for f in *.command; do zsh -n "$f"; done
 python3 -m json.tool configs/sing-box.template.json >/dev/null
 sing-box check -c configs/sing-box.template.json
 (cd android-relay && GOCACHE="$PWD/.gocache" go test ./...)
+./jam-usb-internet doctor --json >/dev/null
+./jam-usb-internet system-status --json >/dev/null
 ./jam-usb-internet app-check
+ui/build-app.sh
 pkg/build-dist.sh
 ```
 
+GUI 앱 소스는 `ui/JamUSBInternet/`에 있고, `ui/build-app.sh`가 `Jam USB Internet.app`을 만든다.
+
 ## Next Packaging Stage
 
-나중에 안정화되면 다음 단계로 간다.
-
-- signed `.app` wrapper
-- menu bar on/off/recover
-- status indicator
+- code signing / notarization for the GUI app
+- menu bar on/off/recover companion
 - optional signed/notarized `.pkg` installer

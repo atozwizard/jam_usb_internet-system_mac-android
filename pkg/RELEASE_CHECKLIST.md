@@ -33,6 +33,9 @@ zsh -n jam-usb-internet
 for f in *.command; do zsh -n "$f"; done
 python3 -m json.tool configs/sing-box.template.json >/dev/null
 sing-box check -c configs/sing-box.template.json
+./jam-usb-internet doctor --json >/dev/null
+./jam-usb-internet system-status --json >/dev/null
+ui/build-app.sh
 ```
 
 ## Android Relay Check
@@ -81,9 +84,22 @@ pkg/build-dist.sh
 결과:
 
 ```text
+pkg/dist/jam-usb-internet-<version>/
+  Jam USB Internet.app
+  jam-usb-internet
+  Galaxy USB Internet ON.command
+  ...
 pkg/dist/jam-usb-internet-<version>.zip
 pkg/dist/jam-usb-internet-<version>.zip.sha256
 ```
+
+GUI smoke check after unzip:
+
+1. Open `Jam USB Internet.app`.
+2. Confirm preflight checks render (ADB, sing-box).
+3. Confirm status header refreshes.
+4. If Galaxy is connected, ON/OFF/RECOVER buttons are enabled.
+5. Fallback: `Galaxy USB Internet ON.command` still works.
 
 ## Known Non-Blocking Limitations
 

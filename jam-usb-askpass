@@ -1,0 +1,17 @@
+#!/bin/zsh
+#
+# SUDO_ASKPASS helper for jam-usb-internet GUI launches (no TTY).
+# Prints the administrator password on stdout for sudo -A.
+
+set -u
+
+/usr/bin/osascript <<'APPLESCRIPT'
+on run
+  try
+    set theAnswer to display dialog "jam-usb-internet needs your administrator password:" default answer "" with hidden answer with title "Administrator Password" buttons {"Cancel", "OK"} default button "OK"
+    return text returned of theAnswer
+  on error number -128
+    return ""
+  end try
+end run
+APPLESCRIPT

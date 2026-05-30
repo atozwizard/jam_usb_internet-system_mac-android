@@ -15,45 +15,31 @@ chmod +x jam-usb-internet *.command
 ./jam-usb-internet system
 ```
 
-For double-click use, open:
+For packaged distribution, double-click:
 
 ```text
-/Users/twentyflags/twentyflags/knocklab/tools/jam-usb-internet/Galaxy USB Internet.command
+Jam USB Internet.app
 ```
 
-`Galaxy USB Internet.command` starts USB system mode only when normal Mac internet is not already working. If Mac Wi-Fi internet is healthy, it leaves Wi-Fi alone.
+The app shows ON/OFF/RECOVER controls, live status, preflight checks, and logs. Keep the app open while USB internet is running; use **끄기** before closing.
 
-Keep the `Galaxy USB Internet.command` terminal window open while using USB system mode.
-
-Explicit double-click controls are also available:
+Terminal fallback (same folder):
 
 ```text
-/Users/twentyflags/twentyflags/knocklab/tools/jam-usb-internet/Galaxy USB Internet ON.command
-/Users/twentyflags/twentyflags/knocklab/tools/jam-usb-internet/Galaxy USB Internet OFF.command
-/Users/twentyflags/twentyflags/knocklab/tools/jam-usb-internet/Galaxy USB Internet RECOVER.command
+Galaxy USB Internet ON.command
+Galaxy USB Internet OFF.command
+Galaxy USB Internet RECOVER.command
 ```
 
-Use `ON` to start the USB internet tunnel, `OFF` for normal shutdown, and `RECOVER` if a terminal was force-closed or normal Wi-Fi internet does not come back.
-
-For Chrome-only fallback, open:
+Legacy launchers remain available:
 
 ```text
-/Users/twentyflags/twentyflags/knocklab/tools/jam-usb-internet/Galaxy Browser Fallback.command
+Galaxy USB Internet.command
+Galaxy Browser Fallback.command
+Galaxy System Stop.command
 ```
 
-For normal stop, use:
-
-```text
-/Users/twentyflags/twentyflags/knocklab/tools/jam-usb-internet/Galaxy USB Internet OFF.command
-```
-
-The older strong stop/recovery launcher is also available:
-
-```text
-/Users/twentyflags/twentyflags/knocklab/tools/jam-usb-internet/Galaxy System Stop.command
-```
-
-Use normal stop before closing the system-mode terminal window whenever possible. Closing the window starts an abnormal-exit cleanup guard, but field tests still show that forced terminal close can leave normal Mac internet unavailable until recovery is run. Explicit `OFF` / `system-stop` is the safe path; `RECOVER` / `system-recover` is the panic button.
+Use **OFF** / **끄기** for normal shutdown. Use **RECOVER** / **복구** if a session was force-closed or normal Mac Wi-Fi internet does not come back.
 
 ## Phone Setup
 

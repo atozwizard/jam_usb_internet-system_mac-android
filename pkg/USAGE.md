@@ -15,22 +15,20 @@ brew install sing-box
 4. Mac에서 새 USB accessory 허용 창이 뜨면 허용한다.
 5. Galaxy USB 모드를 `File Transfer / Android Auto`로 둔다.
 6. Galaxy 화면에서 USB debugging 허용을 확인한다.
-7. Mac에서 다음 파일을 실행한다.
+7. Mac에서 `Jam USB Internet.app`을 실행한다.
+8. 앱 상단의 시작 전 확인(ADB, sing-box, USB debugging)이 통과했는지 본다.
+9. **[USB 인터넷 켜기]**를 누른다. 관리자 비밀번호를 묻면 입력한다.
+10. 사용 중에는 앱을 닫지 않는다. 로그 패널에서 `[ok] System mode is running.`을 확인한다.
+11. 끝낼 때는 앱의 **[끄기]**를 사용한다.
+12. 인터넷이 꼬였거나 앱/터미널을 강제로 닫았다면 앱의 **[복구]**를 사용한다.
+
+### Fallback: `.command` 파일
+
+Gatekeeper 경고나 GUI sudo 문제가 있으면 터미널 fallback을 쓴다.
 
 ```text
 Galaxy USB Internet ON.command
-```
-
-8. 사용 중에는 열린 Terminal 창을 닫지 않는다.
-9. 끝낼 때는 다음 파일을 실행한다.
-
-```text
 Galaxy USB Internet OFF.command
-```
-
-10. 인터넷이 꼬였거나 창을 강제로 닫았다면 다음 파일을 실행한다.
-
-```text
 Galaxy USB Internet RECOVER.command
 ```
 
@@ -66,8 +64,11 @@ Galaxy USB Internet RECOVER.command
 
 ## 3. 상태 확인
 
+앱 상단 상태 줄이 3초마다 갱신된다. 터미널에서는:
+
 ```zsh
 ./jam-usb-internet system-status
+./jam-usb-internet system-status --json
 ```
 
 확인할 것:

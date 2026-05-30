@@ -23,6 +23,7 @@ mkdir -p "$BUNDLE_DIR/android-relay/bin/arm64-v8a"
 mkdir -p "$BUNDLE_DIR/docs/reference"
 
 cp "$ROOT/jam-usb-internet" "$BUNDLE_DIR/"
+cp "$ROOT/jam-usb-askpass" "$BUNDLE_DIR/"
 cp "$ROOT/adb-socks-proxy.py" "$BUNDLE_DIR/"
 cp "$ROOT"/*.command "$BUNDLE_DIR/"
 cp "$ROOT/configs/sing-box.template.json" "$BUNDLE_DIR/configs/"
@@ -41,7 +42,22 @@ if [[ -d "$ROOT/reference" ]]; then
 fi
 
 chmod +x "$BUNDLE_DIR/jam-usb-internet"
+chmod +x "$BUNDLE_DIR/jam-usb-askpass"
 chmod +x "$BUNDLE_DIR"/*.command
+
+UI_BUILD="${ROOT}/ui/build-app.sh"
+APP_NAME="Jam USB Internet.app"
+if [[ -x "$UI_BUILD" ]]; then
+  "$UI_BUILD"
+  if [[ -d "${ROOT}/ui/build/${APP_NAME}" ]]; then
+    cp -R "${ROOT}/ui/build/${APP_NAME}" "$BUNDLE_DIR/"
+    echo "Included: ${APP_NAME}"
+  else
+    echo "Warning: UI build did not produce ${APP_NAME}" >&2
+  fi
+else
+  echo "Warning: ${UI_BUILD} not found; skipping GUI app" >&2
+fi
 
 cat > "$BUNDLE_DIR/START_HERE.txt" <<EOF
 jam-usb-internet ${VERSION}
@@ -54,12 +70,13 @@ jam-usb-internet ${VERSION}
 6. Connect Galaxy by USB data cable.
 7. Set Galaxy USB mode to File Transfer / Android Auto.
 8. Authorize USB debugging.
-9. Double-click: Galaxy USB Internet ON.command
-10. Stop safely with: Galaxy USB Internet OFF.command
-11. If normal Mac internet does not recover, run: Galaxy USB Internet RECOVER.command
+9. Double-click: Jam USB Internet.app
+   Fallback: Galaxy USB Internet ON.command
+10. Stop safely with the app's [끄기] button or Galaxy USB Internet OFF.command
+11. If normal Mac internet does not recover, use the app's [복구] button or Galaxy USB Internet RECOVER.command
 
 Current milestone: TCP/DNS internet for Chrome, Discord text/API, KakaoTalk, and git.
-Known limits: forced terminal close may need RECOVER; Discord voice/video UDP is not covered.
+Known limits: forced close may need RECOVER; Discord voice/video UDP is not covered.
 EOF
 
 if command -v zip >/dev/null 2>&1; then
