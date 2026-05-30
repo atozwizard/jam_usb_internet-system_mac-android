@@ -852,6 +852,61 @@ Next validation:
   tail -80 ~/.jam-usb-internet/system-guard.log
   ```
 
+### Session 12: 2026-05-30 Guard Restart Loop Root Cause
+
+New evidence:
+
+```text
+system-status:
+Cleanup guard:
+  pid: none
+  session: active
+  label: com.atozwizard.jam-usb-internet.guard.87938
+```
+
+Guard log showed repeated `launchctl submit` restarts:
+
+```text
+cleanup guard started for parent ...
+cleanup guard disarmed after parent exit
+cleanup guard started for parent ...
+cleanup guard disarmed after parent exit
+```
+
+Root cause:
+
+- `launchctl submit` left the guard label registered after the guard process exited.
+- The submitted job could restart repeatedly.
+- The first guard design treated missing session state as a normal disarm condition.
+- During a real Terminal force-close, parent disappearance plus partial cleanup could make the guard exit without running recovery.
+
+Patch applied:
+
+- Added explicit disarm token file:
+
+  ```text
+  ~/.jam-usb-internet/system-guard.disarm
+  ```
+
+- The guard now treats only a matching disarm token as normal shutdown.
+- If the parent process disappears and the disarm token is absent, the guard runs recovery even if the session file is missing.
+- The guard removes its own `launchctl` label before exit to prevent restart loops.
+- Startup removes stale guard jobs with the project label prefix before launching a new guard.
+- Existing stale guard labels were removed from the local launchd state.
+
+Validation:
+
+- `zsh -n jam-usb-internet` passed.
+- `sing-box check` passed.
+- Android relay `go test ./...` passed.
+- Normal Wi-Fi `app-check` passed.
+- Guard explicit-disarm unit test passed.
+
+Remaining field test:
+
+- Real Terminal forced close with the explicit-disarm guard.
+- Galaxy LTE KakaoTalk diagnosis with `app-check` and `system-status`.
+
 ## 10. Current Known State
 
 Known working:
@@ -896,6 +951,8 @@ Impact:
 Current patch:
 
 - Launch cleanup guard for abnormal system-mode exits through `sudo launchctl submit`.
+- Require an explicit disarm token before treating guard exit as normal.
+- Remove stale guard launchd labels before starting a new guard.
 - Make guard refuse to start system mode if it cannot be launched.
 - Disarm guard only after normal cleanup is complete.
 - Make preclean restore route state before stopping old TUN engine.

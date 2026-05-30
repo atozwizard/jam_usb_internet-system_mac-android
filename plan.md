@@ -449,7 +449,10 @@ Current implementation:
 - The older `nohup` background guard remains as fallback if `launchctl submit` fails.
 - The guard runs with administrator privileges so it can recover routes/DNS without a terminal prompt.
 - The guard monitors the main system-mode process.
-- If the main process disappears without normal disarm, the guard runs recovery cleanup automatically.
+- Normal shutdown writes an explicit disarm token.
+- If the main process disappears without that matching disarm token, the guard runs recovery cleanup automatically.
+- The guard removes its own launchd label before exit to avoid restart loops.
+- Startup removes stale guard jobs before launching a new guard.
 - Cleanup also repairs stale local SOCKS proxies when they point to this tool's local ports.
 - `system-status` reports guard pid, launchctl label, session state, and log path.
 
@@ -457,7 +460,8 @@ Current validation state:
 
 - Unit-style disarm test passed with a temporary state directory.
 - First field validation with the original guard failed.
-- Field validation is still needed with the launchctl guard.
+- Second local unit test with explicit disarm token passed.
+- Field validation is still needed with the explicit-disarm launchctl guard.
 
 ### 9.4 Documentation
 
@@ -475,7 +479,7 @@ and fallback:
 
 ### 9.5 Remaining Work
 
-- Field-test forced terminal close with guard enabled.
+- Field-test forced terminal close with explicit-disarm guard enabled.
 - Add on/off `.command` naming once behavior is stable.
 - Make command windows less scary for non-technical use.
 

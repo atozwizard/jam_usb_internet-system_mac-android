@@ -26,6 +26,7 @@ SING_BOX_CONFIG="${STATE_DIR}/sing-box.system.json"
 SING_BOX_PID_FILE="${STATE_DIR}/sing-box.pid"
 SYSTEM_GUARD_PID_FILE="${STATE_DIR}/system-guard.pid"
 SYSTEM_SESSION_FILE="${STATE_DIR}/system-session"
+SYSTEM_GUARD_DISARM_FILE="${STATE_DIR}/system-guard.disarm"
 SYSTEM_GUARD_LOG="${STATE_DIR}/system-guard.log"
 SYSTEM_GUARD_LABEL_FILE="${STATE_DIR}/system-guard.label"
 TUN_GATEWAY="172.19.0.1"
@@ -1680,6 +1681,37 @@ system_guard_session_matches() {
   [[ "$current_token" == "$expected_token" ]]
 }
 
+system_guard_disarmed() {
+  local expected_token="$1"
+  local disarm_token
+
+  [[ -s "$SYSTEM_GUARD_DISARM_FILE" ]] || return 1
+  disarm_token="$(< "$SYSTEM_GUARD_DISARM_FILE")"
+  [[ "$disarm_token" == "$expected_token" ]]
+}
+
+remove_guard_launchctl_label() {
+  local label="$1"
+
+  [[ -n "$label" ]] || return 0
+  launchctl remove "$label" >/dev/null 2>&1 || true
+  sudo -n launchctl remove "$label" >/dev/null 2>&1 || true
+}
+
+remove_stale_guard_jobs() {
+  local label
+
+  while IFS= read -r label; do
+    [[ -z "$label" ]] && continue
+    remove_guard_launchctl_label "$label"
+  done < <(
+    {
+      launchctl list 2>/dev/null || true
+      sudo -n launchctl list 2>/dev/null || true
+    } | awk '/com\.atozwizard\.jam-usb-internet\.guard\./ {print $3}' | sort -u
+  )
+}
+
 start_system_guard() {
   local parent_pid token launcher_pid i guard_pid label output rc
 
@@ -1687,10 +1719,11 @@ start_system_guard() {
   parent_pid="$$"
   token="${parent_pid}-$(date +%s)-${RANDOM}"
   label="com.atozwizard.jam-usb-internet.guard.${parent_pid}"
+  remove_stale_guard_jobs
   print -r -- "$token"$'\t'"$parent_pid" > "$SYSTEM_SESSION_FILE"
   print -r -- "$label" > "$SYSTEM_GUARD_LABEL_FILE"
   touch "$SYSTEM_GUARD_LOG" >/dev/null 2>&1 || true
-  rm -f "$SYSTEM_GUARD_PID_FILE"
+  rm -f "$SYSTEM_GUARD_PID_FILE" "$SYSTEM_GUARD_DISARM_FILE"
 
   output="$(
     sudo -n launchctl submit \
@@ -1734,7 +1767,7 @@ start_system_guard() {
   done
 
   rm -f "$SYSTEM_SESSION_FILE"
-  sudo -n launchctl remove "$label" >/dev/null 2>&1 || true
+  remove_guard_launchctl_label "$label"
   warn "Could not start abnormal-exit cleanup guard. See: $SYSTEM_GUARD_LOG"
   return 1
 }
@@ -1742,12 +1775,16 @@ start_system_guard() {
 disarm_system_guard() {
   local guard_pid label
 
+  if [[ -s "$SYSTEM_SESSION_FILE" ]]; then
+    print -r -- "$(< "$SYSTEM_SESSION_FILE")" | awk -F'\t' '{print $1}' > "$SYSTEM_GUARD_DISARM_FILE"
+  fi
   rm -f "$SYSTEM_SESSION_FILE"
   if [[ -s "$SYSTEM_GUARD_LABEL_FILE" ]]; then
     label="$(< "$SYSTEM_GUARD_LABEL_FILE")"
-    [[ -n "$label" ]] && sudo -n launchctl remove "$label" >/dev/null 2>&1 || true
+    remove_guard_launchctl_label "$label"
     rm -f "$SYSTEM_GUARD_LABEL_FILE"
   fi
+  remove_stale_guard_jobs
   if [[ -s "$SYSTEM_GUARD_PID_FILE" ]]; then
     guard_pid="$(< "$SYSTEM_GUARD_PID_FILE")"
     if [[ -n "$guard_pid" && "$guard_pid" != "$$" ]]; then
@@ -1760,6 +1797,7 @@ disarm_system_guard() {
 system_guard_command() {
   local parent_pid="$GUARD_PARENT_PID"
   local token="$GUARD_TOKEN"
+  local label=""
 
   require_macos
   ensure_state_dir
@@ -1770,21 +1808,24 @@ system_guard_command() {
   fi
 
   print -r -- "$$" > "$SYSTEM_GUARD_PID_FILE"
+  [[ -s "$SYSTEM_GUARD_LABEL_FILE" ]] && label="$(< "$SYSTEM_GUARD_LABEL_FILE")"
   say "$(date '+%Y-%m-%d %H:%M:%S') cleanup guard started for parent ${parent_pid}"
 
   while kill -0 "$parent_pid" >/dev/null 2>&1; do
-    if ! system_guard_session_matches "$token"; then
+    if system_guard_disarmed "$token"; then
       say "$(date '+%Y-%m-%d %H:%M:%S') cleanup guard disarmed"
       rm -f "$SYSTEM_GUARD_PID_FILE"
+      remove_guard_launchctl_label "$label"
       return 0
     fi
     sleep 2
   done
 
   sleep 1
-  if ! system_guard_session_matches "$token"; then
+  if system_guard_disarmed "$token"; then
     say "$(date '+%Y-%m-%d %H:%M:%S') cleanup guard disarmed after parent exit"
     rm -f "$SYSTEM_GUARD_PID_FILE"
+    remove_guard_launchctl_label "$label"
     return 0
   fi
 
@@ -1798,8 +1839,9 @@ system_guard_command() {
   stop_sing_box_processes
   relay_stop_command || true
   dscacheutil -flushcache >/dev/null 2>&1 || true
-  rm -f "$SYSTEM_SESSION_FILE" "$SYSTEM_GUARD_PID_FILE"
+  rm -f "$SYSTEM_SESSION_FILE" "$SYSTEM_GUARD_PID_FILE" "$SYSTEM_GUARD_DISARM_FILE" "$SYSTEM_GUARD_LABEL_FILE"
   ok "Cleanup guard finished."
+  remove_guard_launchctl_label "$label"
 }
 
 monitor_phone_relay() {
