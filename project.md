@@ -1088,6 +1088,89 @@ Switching the Galaxy's own internet connection from LTE to Wi-Fi during an activ
 
 This is recorded as future reliability work, not part of the core connectivity completion gate.
 
+### Session 16: 2026-05-30 Distribution Packaging Started
+
+User request:
+
+```text
+배포용 패키징 합시다, pkg 디렉토리 생성해서 그곳에 진행
+갤럭시쪽 셋팅 방법과 맥쪽 셋팅 방법 필수사항들로 사용방법도 기록
+```
+
+Implemented:
+
+- Created packaging workspace:
+
+  ```text
+  pkg/
+  ```
+
+- Added portable distribution build script:
+
+  ```text
+  pkg/build-dist.sh
+  ```
+
+- Added Galaxy setup guide:
+
+  ```text
+  pkg/GALAXY_SETUP.md
+  ```
+
+- Added Mac setup guide:
+
+  ```text
+  pkg/MAC_SETUP.md
+  ```
+
+- Added usage guide:
+
+  ```text
+  pkg/USAGE.md
+  ```
+
+- Added release checklist:
+
+  ```text
+  pkg/RELEASE_CHECKLIST.md
+  ```
+
+- Added packaging overview:
+
+  ```text
+  pkg/README.md
+  ```
+
+- Updated `.gitignore` so generated distribution artifacts under `pkg/dist/` are not committed.
+- Updated `doctor` wording from Note 9-only to Galaxy phone, including Note 9 and Fold.
+- Bumped project version to:
+
+  ```text
+  0.4.3
+  ```
+
+Packaging format:
+
+```text
+Portable folder + zip
+```
+
+Reason:
+
+- The user must see `ON`, `OFF`, and `RECOVER` directly.
+- Current forced-close recovery still requires an obvious manual recovery path.
+- A signed/notarized `.app` or installer `.pkg` is a later packaging stage.
+
+Generated package:
+
+```text
+pkg/dist/jam-usb-internet-0.4.3/
+pkg/dist/jam-usb-internet-0.4.3.zip
+pkg/dist/jam-usb-internet-0.4.3.zip.sha256
+```
+
+The generated zip is not tracked in git and should be attached to a GitHub Release when a public/private release artifact is needed.
+
 ## 10. Current Known State
 
 Known working:
@@ -1109,6 +1192,7 @@ Known working:
 - `app-check` passes in the target tunnel state.
 - Mac Wi-Fi connected + Galaxy disconnected: normal Mac internet works after `system-stop`.
 - Manual `system-recover` restores normal Mac internet after forced terminal close.
+- Portable distribution packaging exists under `pkg/`.
 
 Known failing:
 

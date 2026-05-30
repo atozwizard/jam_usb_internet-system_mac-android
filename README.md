@@ -175,3 +175,27 @@ Current field status:
 - Normal stop with `system-stop` restores Mac Wi-Fi.
 - Forced terminal close is not yet reliable enough to trust; `system-recover` remains the manual fallback and should become a visible Recover button in packaging.
 - Switching the Galaxy's own internet path between LTE and Wi-Fi during an active session can briefly interrupt the phone network and terminate the tunnel process. This is deferred to a later reliability stage.
+
+## Distribution Packaging
+
+Packaging work lives in:
+
+```text
+/Users/twentyflags/twentyflags/knocklab/tools/jam-usb-internet/pkg
+```
+
+Build a portable distribution folder and zip:
+
+```zsh
+pkg/build-dist.sh
+```
+
+The generated zip includes:
+
+- ON / OFF / RECOVER `.command` launchers
+- Galaxy setup guide for Note 9 and Fold
+- Mac setup guide for Apple Silicon / M3 Pro security prompts
+- usage guide and release checklist
+- Android relay binary and sing-box config template
+
+Generated files are written under `pkg/dist/` and are not committed to git.

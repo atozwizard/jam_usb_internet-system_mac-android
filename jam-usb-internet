@@ -10,7 +10,7 @@
 set -u
 
 APP_NAME="jam-usb-internet"
-VERSION="0.4.2"
+VERSION="0.4.3"
 SCRIPT_DIR="${0:a:h}"
 STATE_DIR="${JAM_USB_STATE_DIR:-${HOME}/.jam-usb-internet}"
 ORDER_BACKUP="${STATE_DIR}/network-services.before"
@@ -2489,8 +2489,8 @@ doctor_command() {
   say ""
   say "Phone prep checklist:"
   say "  - Use a USB data cable, not a charge-only cable."
-  say "  - Unlock Galaxy Note 9."
-  say "  - Turn on mobile data."
+  say "  - Unlock the Galaxy phone, for example Note 9 or Fold."
+  say "  - Turn on phone Wi-Fi or mobile data."
   say "  - Set USB mode to File Transfer / Android Auto."
   say "  - Enable USB debugging and authorize this Mac."
   say "  - Keep USB tethering off for system mode."

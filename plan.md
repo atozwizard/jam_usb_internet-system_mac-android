@@ -578,12 +578,22 @@ Reason:
 
 ### 11.2 First Packaging Step
 
-Implemented first explicit controls:
+Implemented explicit controls:
 
 - `Galaxy USB Internet ON.command`
 - `Galaxy USB Internet OFF.command`
 - `Galaxy USB Internet RECOVER.command`
 - README uses on/off/recover wording.
+
+Implemented portable distribution workspace:
+
+- `pkg/README.md`
+- `pkg/GALAXY_SETUP.md`
+- `pkg/MAC_SETUP.md`
+- `pkg/USAGE.md`
+- `pkg/RELEASE_CHECKLIST.md`
+- `pkg/build-dist.sh`
+- generated local artifact under `pkg/dist/`
 
 Compatibility:
 
@@ -714,19 +724,21 @@ Remote `main` now points to the rewritten author history.
 3. Keep KakaoTalk reachability strict in `app-check`.
 4. Improve forced-close recovery without risking normal stop/recover.
 5. Later, add relay resilience for Galaxy LTE/Wi-Fi switching.
-6. Verify syntax and config after each change.
+6. Keep packaging build reproducible.
+7. Verify syntax and config after each change.
 
 ### 13.2 Docs
 
 1. Keep `project.md` current with field session results.
 2. Keep `plan.md` current with milestone state and future work.
 3. Update README with on/off/recover usage.
-4. Keep session logs appended as work continues.
+4. Keep `pkg/` setup docs current for Note 9, Fold, and Apple Silicon Mac.
+5. Keep session logs appended as work continues.
 
 ### 13.3 Git
 
 1. Keep local author identity as `atozwizard`.
-2. Commit latest docs and command controls.
+2. Commit latest package workspace.
 3. Push normally.
 4. Verify remote repository metadata.
 
