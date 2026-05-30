@@ -747,7 +747,7 @@ Internet works
 KakaoTalk reported working in this run
 ```
 
-Later Session 11 results supersede the LTE KakaoTalk conclusion: LTE can carry general internet, but KakaoTalk can fail.
+Later Session 11 results temporarily superseded the LTE KakaoTalk conclusion because LTE could carry general internet while KakaoTalk failed. Session 15 supersedes that again: LTE now passes KakaoTalk and strict `app-check`.
 
 Normal stop result:
 
@@ -819,7 +819,7 @@ User validation order:
 Interpretation:
 
 - Galaxy Wi-Fi path is now the best validated target path.
-- Galaxy LTE path can carry general internet and Discord, but KakaoTalk remains unreliable or blocked on that path.
+- Galaxy LTE path can carry general internet and Discord, but KakaoTalk was unreliable in this session. Session 15 later resolved this, so it is no longer a current blocker.
 - Normal stop is reliable.
 - The first cleanup guard implementation did not reliably recover after a real Terminal force-close.
 - The force-close symptom may include stale route/DNS state and/or stale local SOCKS proxy state because `system-recover` fixed the condition.
@@ -1022,6 +1022,72 @@ Next validation:
 
 - Test KakaoTalk on Galaxy Wi-Fi again after the default-route fallback.
 
+### Session 15: 2026-05-30 Core Connectivity Milestone Reached
+
+User validation:
+
+```text
+Mac Wi-Fi off
+Galaxy Wi-Fi connected
+Chrome/web works
+KakaoTalk works
+```
+
+User validation:
+
+```text
+Mac Wi-Fi off
+Galaxy LTE connected
+Chrome/web works
+Claude works
+Discord works
+KakaoTalk works
+```
+
+Strict app check while system mode was active:
+
+```text
+[ok] DNS works through current macOS resolver.
+[ok] Chrome/web HTTPS reachable (204): https://www.google.com/generate_204
+[ok] Discord gateway API HTTPS reachable (200): https://discord.com/api/v10/gateway
+[ok] Discord gateway TCP reachable: gateway.discord.gg:443
+[ok] Kakao HTTPS reachable (404): https://talk.kakao.com
+[ok] Kakao TCP reachable: talk.kakao.com:443
+[ok] KakaoTalk macOS reachability: talk.kakao.com (Reachable)
+[ok] git over HTTPS reachable: github.com/git/git.git
+[ok] App connectivity check passed.
+```
+
+Outcome:
+
+- The core TCP/DNS app milestone is met for both Galaxy Wi-Fi and Galaxy LTE.
+- KakaoTalk is no longer the immediate blocker after the latest route/reachability fixes and field validation.
+- Normal `system-stop` restores ordinary Mac Wi-Fi internet.
+- Manual `system-recover` restores ordinary Mac Wi-Fi internet after abnormal terminal close.
+
+Remaining reliability issue:
+
+```text
+Force-closing the system-mode terminal can still leave general Mac internet unavailable until system-recover is run.
+```
+
+Accepted near-term handling:
+
+- Do not treat forced-close auto-recovery as a blocker for core USB internet usability.
+- Package visible controls so the daily workflow has:
+  - ON
+  - OFF
+  - RECOVER
+- Continue improving the guard later.
+
+Deferred issue:
+
+```text
+Switching the Galaxy's own internet connection from LTE to Wi-Fi during an active session can briefly interrupt the phone path and terminate the tunnel process.
+```
+
+This is recorded as future reliability work, not part of the core connectivity completion gate.
+
 ## 10. Current Known State
 
 Known working:
@@ -1039,14 +1105,16 @@ Known working:
 - `app-check` on normal Wi-Fi.
 - Local Git author config is now `atozwizard`.
 - Mac Wi-Fi off + Galaxy Wi-Fi connected: internet works, KakaoTalk works.
-- Mac Wi-Fi off + Galaxy LTE connected: Chrome/Claude/general internet works; Discord can work after retry/recovery.
+- Mac Wi-Fi off + Galaxy LTE connected: Chrome/web, Claude, Discord, KakaoTalk, and git work after the latest validation.
+- `app-check` passes in the target tunnel state.
 - Mac Wi-Fi connected + Galaxy disconnected: normal Mac internet works after `system-stop`.
+- Manual `system-recover` restores normal Mac internet after forced terminal close.
 
 Known failing:
 
-- Galaxy LTE path: KakaoTalk can fail even when Chrome/Claude/Discord work.
-- Abnormal terminal/window close can leave Mac networking unrecovered in the pre-launchctl-guard build.
-- Launchctl cleanup guard behavior after forced close is implemented but still needs field validation.
+- Abnormal terminal/window close can still leave general Mac internet unavailable until `system-recover` is run.
+- Switching Galaxy LTE/Wi-Fi while the tunnel is active can interrupt the phone network briefly and terminate the tunnel process.
+- Discord voice/video is not guaranteed because the current milestone is TCP/DNS, not UDP.
 
 ## 11. Current Blockers
 
@@ -1090,41 +1158,41 @@ Fallback if this test fails:
 ./jam-usb-internet system-recover
 ```
 
-### Blocker B: KakaoTalk on Galaxy LTE
+Current product decision:
+
+- Keep `system-recover` as a required visible control.
+- Treat automatic abnormal-exit cleanup as a reliability improvement, not a blocker for the core connectivity milestone.
+
+### Blocker B: Mid-Session Galaxy Network Switching
 
 Symptom:
 
 ```text
-Mac Wi-Fi off + Galaxy Wi-Fi or LTE connected
-Chrome/Claude/general internet works
-Discord can work
-KakaoTalk fails
+Galaxy LTE connected and system mode running.
+Galaxy network is switched to Wi-Fi.
+During the brief phone-side network drop, the terminal/tunnel process exits.
 ```
 
 Impact:
 
-- KakaoTalk is no longer considered stable on either Galaxy Wi-Fi or LTE until app-check and real app behavior agree.
-- General USB internet remains usable.
+- Active sessions are not resilient to phone-side network transitions.
+- The user can restart system mode after the phone settles.
 
-Required next diagnostic:
+Required later work:
 
-Run while system mode is active on Galaxy LTE:
+- Relay reconnect/backoff.
+- ADB forward health monitor.
+- Do not tear down immediately on one transient phone-side network failure.
 
-```zsh
-./jam-usb-internet app-check
-./jam-usb-internet system-status
-```
+### Blocker C: Packaging UI Incomplete
 
-and record whether the failing part is:
+Minimal packaging has started with explicit command launchers:
 
-- Kakao HTTPS
-- Kakao TCP
-- KakaoTalk macOS reachability
-- KakaoTalk app behavior only
+- `Galaxy USB Internet ON.command`
+- `Galaxy USB Internet OFF.command`
+- `Galaxy USB Internet RECOVER.command`
 
-### Blocker C: Packaging Not Yet Started
-
-Packaging should wait until:
+Full `.app` packaging should wait until:
 
 - Abnormal close recovery is field-validated.
 - Stop/recover are proven.
@@ -1148,10 +1216,10 @@ Status:
 Status:
 
 ```text
-KakaoTalk works in target Galaxy Wi-Fi conditions.
+KakaoTalk works in target Galaxy Wi-Fi and Galaxy LTE conditions.
 ```
 
-Galaxy LTE remains a separate app-compatibility blocker.
+The latest strict `app-check` passed while system mode was active.
 
 ## 12. Risk Register
 
@@ -1216,9 +1284,9 @@ ADB relay remains the primary engineering path.
 
 Current milestone does not include UDP.
 
-### Decision 4: No Packaging Until Functional Completion
+### Decision 4: Minimal Command Packaging Is Allowed
 
-On/off UI packaging waits until target system mode works reliably.
+Full `.app` packaging waits until reliability is better, but explicit command launchers are allowed now because the core USB internet path works and recovery must be easy to access.
 
 ### Decision 5: Explicit Stop Is Preferred
 
@@ -1231,7 +1299,13 @@ Users should stop with:
 or:
 
 ```text
-Galaxy System Stop.command
+Galaxy USB Internet OFF.command
 ```
 
 before closing the terminal.
+
+If the terminal was force-closed or normal Wi-Fi does not recover, users should run:
+
+```text
+Galaxy USB Internet RECOVER.command
+```

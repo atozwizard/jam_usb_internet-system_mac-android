@@ -25,19 +25,35 @@ For double-click use, open:
 
 Keep the `Galaxy USB Internet.command` terminal window open while using USB system mode.
 
+Explicit double-click controls are also available:
+
+```text
+/Users/twentyflags/twentyflags/knocklab/tools/jam-usb-internet/Galaxy USB Internet ON.command
+/Users/twentyflags/twentyflags/knocklab/tools/jam-usb-internet/Galaxy USB Internet OFF.command
+/Users/twentyflags/twentyflags/knocklab/tools/jam-usb-internet/Galaxy USB Internet RECOVER.command
+```
+
+Use `ON` to start the USB internet tunnel, `OFF` for normal shutdown, and `RECOVER` if a terminal was force-closed or normal Wi-Fi internet does not come back.
+
 For Chrome-only fallback, open:
 
 ```text
 /Users/twentyflags/twentyflags/knocklab/tools/jam-usb-internet/Galaxy Browser Fallback.command
 ```
 
-To stop system mode, open:
+For normal stop, use:
+
+```text
+/Users/twentyflags/twentyflags/knocklab/tools/jam-usb-internet/Galaxy USB Internet OFF.command
+```
+
+The older strong stop/recovery launcher is also available:
 
 ```text
 /Users/twentyflags/twentyflags/knocklab/tools/jam-usb-internet/Galaxy System Stop.command
 ```
 
-Do this before closing the system-mode terminal window whenever possible. Closing the window starts an abnormal-exit cleanup guard, but the explicit stop command is still safer because system mode temporarily changes routes and DNS.
+Use normal stop before closing the system-mode terminal window whenever possible. Closing the window starts an abnormal-exit cleanup guard, but field tests still show that forced terminal close can leave normal Mac internet unavailable until recovery is run. Explicit `OFF` / `system-stop` is the safe path; `RECOVER` / `system-recover` is the panic button.
 
 ## Phone Setup
 
@@ -105,7 +121,7 @@ Abnormal close behavior:
 - If the system-mode terminal is force-closed, the guard should notice that the main session disappeared and run recovery automatically.
 - Terminal `HUP`/`TERM` exits are treated as abnormal: the script cleans local state but keeps the guard armed.
 - After a forced close, the guard repeats route/DNS/proxy repair for up to about two minutes so it can catch the moment when Mac Wi-Fi reconnects.
-- If normal Wi-Fi still does not work a few seconds after a forced close, run `Galaxy System Stop.command` or `./jam-usb-internet system-recover`.
+- Current field result: forced terminal close still may not restore general Mac internet automatically. If normal Wi-Fi does not work after a forced close, run `Galaxy USB Internet RECOVER.command` or `./jam-usb-internet system-recover`.
 
 Safe stop rule:
 
@@ -154,6 +170,8 @@ Completion indicators:
 Current field status:
 
 - Galaxy Wi-Fi path: internet and KakaoTalk work with Mac Wi-Fi off.
-- Galaxy LTE path: general internet works; Discord can work; KakaoTalk may still fail and remains an app-compatibility target.
+- Galaxy LTE path: internet and KakaoTalk work with Mac Wi-Fi off.
+- `app-check` has passed in the target tunnel state: DNS, Chrome/web, Discord API/TCP, Kakao HTTPS/TCP, KakaoTalk reachability, and git.
 - Normal stop with `system-stop` restores Mac Wi-Fi.
-- Forced terminal close is protected by a cleanup guard, but `system-recover` remains the manual fallback.
+- Forced terminal close is not yet reliable enough to trust; `system-recover` remains the manual fallback and should become a visible Recover button in packaging.
+- Switching the Galaxy's own internet path between LTE and Wi-Fi during an active session can briefly interrupt the phone network and terminate the tunnel process. This is deferred to a later reliability stage.

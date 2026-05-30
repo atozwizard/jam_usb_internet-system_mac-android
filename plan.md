@@ -272,7 +272,7 @@ User validation after the nonfatal route patch:
 
 ```text
 Mac Wi-Fi off + Galaxy Wi-Fi connected: internet works, KakaoTalk works.
-Mac Wi-Fi off + Galaxy LTE connected: general internet works; KakaoTalk result is inconsistent and later failed.
+Mac Wi-Fi off + Galaxy LTE connected: initially inconsistent; later Session 15 validation passed for KakaoTalk and app-check.
 ```
 
 ### 7.5 Current Patch
@@ -332,21 +332,29 @@ Passed outcomes:
 - Internet works.
 - Chrome works.
 - Claude works.
-- Discord can work after retry/recovery.
+- Discord works after the latest validation.
+- KakaoTalk works on Galaxy Wi-Fi and Galaxy LTE after the latest validation.
 
-Known LTE app gap:
+Strict completion check now passed:
 
-- KakaoTalk can fail on Galaxy LTE even when general internet works.
-
-Remaining validation:
-
-```zsh
-./jam-usb-internet app-check
+```text
+DNS works through current macOS resolver.
+Chrome/web HTTPS reachable.
+Discord gateway API HTTPS reachable.
+Discord gateway TCP reachable.
+Kakao HTTPS reachable.
+Kakao TCP reachable.
+KakaoTalk macOS reachability reachable.
+git over HTTPS reachable.
+App connectivity check passed.
 ```
 
-and abnormal-close recovery.
+The TCP/DNS app milestone is complete for the current MacBook + Galaxy Note 9 workflow.
 
-If `app-check` passes while system mode is active, the TCP/DNS app milestone is complete.
+Remaining reliability work:
+
+- Forced terminal close still requires manual `system-recover`.
+- Mid-session Galaxy LTE/Wi-Fi switching can terminate the active tunnel.
 
 ## 8. Stage 5: Route, DNS, and Reachability Reliability
 
@@ -465,7 +473,13 @@ Current validation state:
 - Second local unit test with explicit disarm token passed.
 - Field validation showed the guard runs cleanup, but one pass is not enough when Wi-Fi reconnects later.
 - Field validation showed repeated cleanup is still ineffective if the main process disarms the guard during `HUP`/`TERM`.
-- Field validation is still needed after keeping the guard armed on `HUP`/`TERM`.
+- Field validation after keeping the guard armed on `HUP`/`TERM` still showed general internet can remain unavailable until manual `system-recover`.
+
+Current product stance:
+
+- Do not block the core USB internet milestone on forced-close auto-recovery.
+- Keep improving the guard later.
+- Make recovery a visible first-class control in packaging.
 
 ### 9.4 Documentation
 
@@ -483,8 +497,8 @@ and fallback:
 
 ### 9.5 Remaining Work
 
-- Field-test forced terminal close with repeated cleanup guard enabled.
-- Add on/off `.command` naming once behavior is stable.
+- Improve forced terminal close recovery.
+- Keep explicit on/off/recover `.command` controls.
 - Make command windows less scary for non-technical use.
 
 ## 10. Stage 7: App Compatibility
@@ -538,36 +552,43 @@ app-check passes.
 In Mac Wi-Fi-off target state:
 
 ```text
-Galaxy Wi-Fi path carries general internet; KakaoTalk can fail.
-Galaxy LTE path carries general internet; KakaoTalk can fail.
+Galaxy Wi-Fi path carries general internet and KakaoTalk.
+Galaxy LTE path carries general internet and KakaoTalk.
+app-check passes.
 ```
 
 ### 10.4 Remaining Work
 
-- Confirm `app-check` while system mode is active in the target state.
-- Confirm Discord text/API path during the same target-state run.
-- Field-test abnormal-close cleanup guard.
-- Diagnose KakaoTalk failure on Galaxy Wi-Fi and LTE with `app-check` and `system-status`.
+- Preserve the current passing app-check state while making reliability changes.
+- Improve abnormal-close cleanup guard.
+- Handle mid-session Galaxy LTE/Wi-Fi switching without terminating the tunnel.
 - Defer Discord voice/video until UDP strategy exists.
 
 ## 11. Stage 8: Packaging
 
 ### 11.1 Packaging Boundary
 
-Do not package yet.
+Minimal command packaging is allowed now.
 
 Reason:
 
 - System mode now works in target Mac Wi-Fi-off conditions.
-- Abnormal-close cleanup must be field-validated before packaging.
+- Forced-close automatic recovery is still unreliable, so recovery must be visible.
+- Full `.app` packaging should still wait until the workflow has more field time.
 
 ### 11.2 First Packaging Step
 
-After completion criteria pass:
+Implemented first explicit controls:
 
-- `Galaxy USB Internet.command` becomes explicit On.
-- `Galaxy System Stop.command` becomes explicit Off.
-- README uses on/off wording.
+- `Galaxy USB Internet ON.command`
+- `Galaxy USB Internet OFF.command`
+- `Galaxy USB Internet RECOVER.command`
+- README uses on/off/recover wording.
+
+Compatibility:
+
+- `Galaxy USB Internet.command` remains the original start command.
+- `Galaxy System Stop.command` remains available as the older strong recovery-style stop command.
 
 ### 11.3 Later Packaging Step
 
@@ -688,23 +709,24 @@ Remote `main` now points to the rewritten author history.
 
 ### 13.1 Code
 
-1. Keep cleanup guard active for `system` mode.
-2. Verify forced-close recovery in a real system-mode run.
-3. Keep previous default route backup/restore.
-4. Keep KakaoTalk reachability strict in `app-check`.
-5. Verify syntax and config after each change.
+1. Preserve the passing system-mode app connectivity.
+2. Keep previous default route backup/restore.
+3. Keep KakaoTalk reachability strict in `app-check`.
+4. Improve forced-close recovery without risking normal stop/recover.
+5. Later, add relay resilience for Galaxy LTE/Wi-Fi switching.
+6. Verify syntax and config after each change.
 
 ### 13.2 Docs
 
-1. Create `project.md`.
-2. Create `plan.md`.
-3. Update README with safe stop usage.
+1. Keep `project.md` current with field session results.
+2. Keep `plan.md` current with milestone state and future work.
+3. Update README with on/off/recover usage.
 4. Keep session logs appended as work continues.
 
 ### 13.3 Git
 
 1. Keep local author identity as `atozwizard`.
-2. Commit latest cleanup guard patch.
+2. Commit latest docs and command controls.
 3. Push normally.
 4. Verify remote repository metadata.
 
@@ -724,6 +746,14 @@ Command:
 ./jam-usb-internet system
 ```
 
+Current result:
+
+```text
+Core app connectivity passed for Galaxy Wi-Fi and LTE.
+Forced-close recovery still requires manual system-recover.
+Phone-side LTE/Wi-Fi switching during an active session is deferred.
+```
+
 ## 14. Validation Matrix
 
 ### 14.1 Normal Wi-Fi State
@@ -735,31 +765,34 @@ Mac Wi-Fi connected:
 
 ### 14.2 Mac Wi-Fi Off, Galaxy Wi-Fi Connected
 
-Expected:
+Expected and validated:
 
 - relay check passes.
 - TUN starts.
 - temporary DNS resolver active.
 - internet works.
-- KakaoTalk is currently a separate compatibility check.
+- KakaoTalk works.
+- `app-check` passes.
 
 ### 14.3 Mac Wi-Fi Off, Galaxy LTE Connected
 
-Expected:
+Expected and validated:
 
 - Chrome/general internet works.
-- Discord text/API should work after the current routing fixes.
-- KakaoTalk is not yet stable and remains a blocker.
+- Discord text/API works.
+- KakaoTalk works.
+- `app-check` passes.
 - `--mobile-only` may be used to force phone LTE.
 
 ### 14.4 Abnormal Close
 
-Expected:
+Current result:
 
 - Force-closing the system-mode terminal triggers cleanup guard.
-- Normal Mac Wi-Fi works after reconnecting Wi-Fi.
-- The guard may take 10-120 seconds after Wi-Fi reconnects to verify normal internet.
-- If guard fails, `system-recover` must restore normal internet.
+- General Mac internet may still remain broken after Wi-Fi reconnects.
+- KakaoTalk can continue working while other internet fails, which points to stale route/DNS/proxy state rather than total network loss.
+- Manual `system-recover` restores normal internet.
+- Packaging must expose Recover clearly.
 
 ### 14.5 Phone Internet Off, Mac Wi-Fi Connected
 
