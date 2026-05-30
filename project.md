@@ -960,6 +960,68 @@ Next validation:
   tail -120 ~/.jam-usb-internet/system-guard.log
   ```
 
+### Session 14: 2026-05-30 Forced Close Still Needed Manual Recover
+
+User validation:
+
+```text
+Force-close system-mode terminal
+Connect Mac Wi-Fi
+KakaoTalk works
+Other internet remains unavailable after two minutes
+Run system-recover
+Other internet recovers
+```
+
+Additional user finding:
+
+```text
+Galaxy Wi-Fi path can also fail KakaoTalk.
+```
+
+Guard/system status after manual recovery:
+
+- No `sing-box` process.
+- No temporary DNS resolver.
+- No active guard session.
+- Normal default route points through Wi-Fi gateway.
+- Wi-Fi SOCKS proxy is disabled, but retains this tool's local proxy server/port value while disabled.
+
+Root cause refinement:
+
+- The guard itself can run recovery.
+- However, Terminal close can deliver `HUP`/`TERM` to the main script.
+- The main script's signal trap previously used the same cleanup path as normal shutdown.
+- That path disarmed the guard after cleanup.
+- If Mac Wi-Fi was still off or reconnecting, disarming the guard too early left no process to repeat cleanup after Wi-Fi came back.
+
+Patch applied:
+
+- `INT` and normal `EXIT` still perform normal cleanup and disarm the guard.
+- `TERM` and `HUP` now perform cleanup but keep the guard armed.
+- The guard remains responsible for repeated recovery after abnormal terminal/window close.
+- TUN default route installation now falls back from gateway route to `route add default -interface utunX` to improve macOS reachability for KakaoTalk.
+
+Next validation:
+
+- Start system mode.
+- Confirm guard starts.
+- Force-close Terminal.
+- Reconnect Mac Wi-Fi.
+- Wait for the guard log to show either:
+
+  ```text
+  Cleanup guard verified normal internet after N recovery pass(es).
+  ```
+
+  or:
+
+  ```text
+  Cleanup guard finished repeated repair, but normal internet was not verified.
+  ```
+
+- Test KakaoTalk on Galaxy Wi-Fi again after the default-route fallback.
+
 ## 10. Current Known State
 
 Known working:
@@ -1007,6 +1069,7 @@ Current patch:
 - Require an explicit disarm token before treating guard exit as normal.
 - Remove stale guard launchd labels before starting a new guard.
 - Repeat route/DNS/proxy repair after abnormal exit so delayed Wi-Fi reconnects are handled.
+- Keep the guard armed on `HUP`/`TERM` terminal exits.
 - Make guard refuse to start system mode if it cannot be launched.
 - Disarm guard only after normal cleanup is complete.
 - Make preclean restore route state before stopping old TUN engine.
@@ -1032,7 +1095,7 @@ Fallback if this test fails:
 Symptom:
 
 ```text
-Mac Wi-Fi off + Galaxy LTE connected
+Mac Wi-Fi off + Galaxy Wi-Fi or LTE connected
 Chrome/Claude/general internet works
 Discord can work
 KakaoTalk fails
@@ -1040,8 +1103,8 @@ KakaoTalk fails
 
 Impact:
 
-- Galaxy LTE path is not yet a full completion pass.
-- Galaxy Wi-Fi path remains the stronger target path.
+- KakaoTalk is no longer considered stable on either Galaxy Wi-Fi or LTE until app-check and real app behavior agree.
+- General USB internet remains usable.
 
 Required next diagnostic:
 

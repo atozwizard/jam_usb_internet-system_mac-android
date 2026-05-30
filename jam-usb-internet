@@ -1910,7 +1910,14 @@ install_tun_default_route() {
   if ! route -n get default 2>/dev/null | grep -q "interface: ${tun_if}"; then
     current_route="$(route -n get default 2>&1 | paste -sd ' ' -)"
     warn "Temporary default route verification failed for ${tun_if}: ${current_route}"
-    return 1
+    output="$(sudo -n route -n add default -interface "$tun_if" 2>&1)"
+    rc=$?
+    if (( rc != 0 )) && [[ "$output" != *"File exists"* ]]; then
+      debug "route add default interface failed: $output"
+    fi
+    if ! route -n get default 2>/dev/null | grep -q "interface: ${tun_if}"; then
+      return 1
+    fi
   fi
 
   ok "Installed temporary default route through ${tun_if} for macOS app reachability."
@@ -2146,14 +2153,20 @@ system_command() {
   info "Keep this terminal open. Press Ctrl-C to stop and clean up."
   say ""
 
-  cleanup_system() {
+cleanup_system() {
+    local mode="${1:-normal}"
     (( cleaned_up )) && return 0
     cleaned_up=1
     system_local_cleanup_once remote
     rm -f "$SING_BOX_PID_FILE"
-    disarm_system_guard
+    if [[ "$mode" == "normal" ]]; then
+      disarm_system_guard
+    else
+      warn "Keeping cleanup guard active after abnormal terminal exit."
+    fi
   }
-  trap 'cleanup_system' INT TERM HUP EXIT
+  trap 'cleanup_system normal' INT EXIT
+  trap 'cleanup_system abnormal' TERM HUP
 
   if (( EUID != 0 )); then
     sudo -v || {

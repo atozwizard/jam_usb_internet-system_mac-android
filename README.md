@@ -103,6 +103,7 @@ Abnormal close behavior:
 - `system` starts a `launchctl` cleanup guard before modifying TUN routes or DNS.
 - Normal shutdown writes an explicit disarm token for that guard.
 - If the system-mode terminal is force-closed, the guard should notice that the main session disappeared and run recovery automatically.
+- Terminal `HUP`/`TERM` exits are treated as abnormal: the script cleans local state but keeps the guard armed.
 - After a forced close, the guard repeats route/DNS/proxy repair for up to about two minutes so it can catch the moment when Mac Wi-Fi reconnects.
 - If normal Wi-Fi still does not work a few seconds after a forced close, run `Galaxy System Stop.command` or `./jam-usb-internet system-recover`.
 

@@ -451,6 +451,7 @@ Current implementation:
 - The guard monitors the main system-mode process.
 - Normal shutdown writes an explicit disarm token.
 - If the main process disappears without that matching disarm token, the guard runs recovery cleanup automatically.
+- Terminal `HUP`/`TERM` paths clean up local state but do not disarm the guard.
 - After abnormal exit, the guard repeats route/DNS/proxy repair and internet verification for up to about two minutes.
 - The guard removes its own launchd label before exit to avoid restart loops.
 - Startup removes stale guard jobs before launching a new guard.
@@ -463,7 +464,8 @@ Current validation state:
 - First field validation with the original guard failed.
 - Second local unit test with explicit disarm token passed.
 - Field validation showed the guard runs cleanup, but one pass is not enough when Wi-Fi reconnects later.
-- Field validation is still needed with repeated cleanup enabled.
+- Field validation showed repeated cleanup is still ineffective if the main process disarms the guard during `HUP`/`TERM`.
+- Field validation is still needed after keeping the guard armed on `HUP`/`TERM`.
 
 ### 9.4 Documentation
 
@@ -536,7 +538,7 @@ app-check passes.
 In Mac Wi-Fi-off target state:
 
 ```text
-Galaxy Wi-Fi path works including KakaoTalk.
+Galaxy Wi-Fi path carries general internet; KakaoTalk can fail.
 Galaxy LTE path carries general internet; KakaoTalk can fail.
 ```
 
@@ -545,7 +547,7 @@ Galaxy LTE path carries general internet; KakaoTalk can fail.
 - Confirm `app-check` while system mode is active in the target state.
 - Confirm Discord text/API path during the same target-state run.
 - Field-test abnormal-close cleanup guard.
-- Diagnose KakaoTalk failure on Galaxy LTE with `app-check` and `system-status`.
+- Diagnose KakaoTalk failure on Galaxy Wi-Fi and LTE with `app-check` and `system-status`.
 - Defer Discord voice/video until UDP strategy exists.
 
 ## 11. Stage 8: Packaging
@@ -739,7 +741,7 @@ Expected:
 - TUN starts.
 - temporary DNS resolver active.
 - internet works.
-- KakaoTalk app works.
+- KakaoTalk is currently a separate compatibility check.
 
 ### 14.3 Mac Wi-Fi Off, Galaxy LTE Connected
 
@@ -747,7 +749,7 @@ Expected:
 
 - Chrome/general internet works.
 - Discord text/API should work after the current routing fixes.
-- KakaoTalk is not yet proven on LTE and remains a blocker.
+- KakaoTalk is not yet stable and remains a blocker.
 - `--mobile-only` may be used to force phone LTE.
 
 ### 14.4 Abnormal Close
