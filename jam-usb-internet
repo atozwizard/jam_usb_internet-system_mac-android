@@ -27,6 +27,7 @@ SING_BOX_PID_FILE="${STATE_DIR}/sing-box.pid"
 SYSTEM_GUARD_PID_FILE="${STATE_DIR}/system-guard.pid"
 SYSTEM_SESSION_FILE="${STATE_DIR}/system-session"
 SYSTEM_GUARD_LOG="${STATE_DIR}/system-guard.log"
+SYSTEM_GUARD_LABEL_FILE="${STATE_DIR}/system-guard.label"
 TUN_GATEWAY="172.19.0.1"
 DYNAMIC_DNS_KEY="State:/Network/Service/jam-usb-internet/DNS"
 
@@ -972,6 +973,29 @@ restore_system_socks_proxy() {
   ok "Restored previous SOCKS proxy settings."
 }
 
+repair_stale_local_socks_proxy() {
+  local service enabled server port
+  local repaired=0
+
+  while IFS= read -r service; do
+    [[ -z "$service" ]] && continue
+    enabled="$(networksetup -getsocksfirewallproxy "$service" 2>/dev/null | awk -F': ' '/^Enabled:/ {print $2; exit}')"
+    server="$(networksetup -getsocksfirewallproxy "$service" 2>/dev/null | awk -F': ' '/^Server:/ {print $2; exit}')"
+    port="$(networksetup -getsocksfirewallproxy "$service" 2>/dev/null | awk -F': ' '/^Port:/ {print $2; exit}')"
+
+    if [[ "$enabled" == "Yes" && "$server" == "$PROXY_HOST" && ( "$port" == "$PROXY_PORT" || "$port" == "$RELAY_MAC_PORT" ) ]]; then
+      warn "Detected stale local SOCKS proxy on '$service'; turning it off."
+      networksetup -setsocksfirewallproxystate "$service" off >/dev/null 2>&1 ||
+        sudo -n networksetup -setsocksfirewallproxystate "$service" off >/dev/null 2>&1 || true
+      repaired=1
+    fi
+  done < <(all_network_services)
+
+  if (( repaired )); then
+    ok "Repaired stale local SOCKS proxy settings."
+  fi
+}
+
 set_dns_servers_for_service() {
   local service="$1"
   local output rc
@@ -1534,6 +1558,7 @@ preclean_system_mode() {
   delete_manual_tun_routes
   disable_dynamic_local_dns
   restore_system_dns || true
+  repair_stale_local_socks_proxy
   stop_sing_box_processes
   if start_adb_if_available; then
     adb_cmd forward --remove "tcp:${RELAY_MAC_PORT}" >/dev/null 2>&1 || true
@@ -1656,50 +1681,73 @@ system_guard_session_matches() {
 }
 
 start_system_guard() {
-  local parent_pid token launcher_pid i guard_pid
+  local parent_pid token launcher_pid i guard_pid label output rc
 
   ensure_state_dir
   parent_pid="$$"
   token="${parent_pid}-$(date +%s)-${RANDOM}"
+  label="com.atozwizard.jam-usb-internet.guard.${parent_pid}"
   print -r -- "$token"$'\t'"$parent_pid" > "$SYSTEM_SESSION_FILE"
+  print -r -- "$label" > "$SYSTEM_GUARD_LABEL_FILE"
   touch "$SYSTEM_GUARD_LOG" >/dev/null 2>&1 || true
   rm -f "$SYSTEM_GUARD_PID_FILE"
 
-  if (( EUID == 0 )); then
-    nohup "$SCRIPT_DIR/jam-usb-internet" system-guard \
-      --guard-parent-pid "$parent_pid" \
-      --guard-token "$token" \
-      >> "$SYSTEM_GUARD_LOG" 2>&1 &
-    launcher_pid=$!
+  output="$(
+    sudo -n launchctl submit \
+      -l "$label" \
+      -o "$SYSTEM_GUARD_LOG" \
+      -e "$SYSTEM_GUARD_LOG" \
+      -- /usr/bin/env "JAM_USB_STATE_DIR=$STATE_DIR" "$SCRIPT_DIR/jam-usb-internet" system-guard \
+        --guard-parent-pid "$parent_pid" \
+        --guard-token "$token" 2>&1
+  )"
+  rc=$?
+  if (( rc != 0 )); then
+    debug "launchctl guard submit failed: $output"
+    if (( EUID == 0 )); then
+      nohup "$SCRIPT_DIR/jam-usb-internet" system-guard \
+        --guard-parent-pid "$parent_pid" \
+        --guard-token "$token" \
+        >> "$SYSTEM_GUARD_LOG" 2>&1 &
+      launcher_pid=$!
+    else
+      sudo -n env JAM_USB_STATE_DIR="$STATE_DIR" nohup "$SCRIPT_DIR/jam-usb-internet" system-guard \
+        --guard-parent-pid "$parent_pid" \
+        --guard-token "$token" \
+        >> "$SYSTEM_GUARD_LOG" 2>&1 &
+      launcher_pid=$!
+    fi
   else
-    sudo -n env JAM_USB_STATE_DIR="$STATE_DIR" nohup "$SCRIPT_DIR/jam-usb-internet" system-guard \
-      --guard-parent-pid "$parent_pid" \
-      --guard-token "$token" \
-      >> "$SYSTEM_GUARD_LOG" 2>&1 &
-    launcher_pid=$!
+    launcher_pid=""
   fi
 
   for (( i = 1; i <= 20; i++ )); do
     if [[ -s "$SYSTEM_GUARD_PID_FILE" ]]; then
       guard_pid="$(< "$SYSTEM_GUARD_PID_FILE")"
-      ok "Started abnormal-exit cleanup guard (pid ${guard_pid})."
+      ok "Started abnormal-exit cleanup guard (pid ${guard_pid}, label ${label})."
       return 0
     fi
-    if ! kill -0 "$launcher_pid" >/dev/null 2>&1; then
+    if [[ -n "$launcher_pid" ]] && ! kill -0 "$launcher_pid" >/dev/null 2>&1; then
       break
     fi
     sleep 0.1
   done
 
   rm -f "$SYSTEM_SESSION_FILE"
+  sudo -n launchctl remove "$label" >/dev/null 2>&1 || true
   warn "Could not start abnormal-exit cleanup guard. See: $SYSTEM_GUARD_LOG"
   return 1
 }
 
 disarm_system_guard() {
-  local guard_pid
+  local guard_pid label
 
   rm -f "$SYSTEM_SESSION_FILE"
+  if [[ -s "$SYSTEM_GUARD_LABEL_FILE" ]]; then
+    label="$(< "$SYSTEM_GUARD_LABEL_FILE")"
+    [[ -n "$label" ]] && sudo -n launchctl remove "$label" >/dev/null 2>&1 || true
+    rm -f "$SYSTEM_GUARD_LABEL_FILE"
+  fi
   if [[ -s "$SYSTEM_GUARD_PID_FILE" ]]; then
     guard_pid="$(< "$SYSTEM_GUARD_PID_FILE")"
     if [[ -n "$guard_pid" && "$guard_pid" != "$$" ]]; then
@@ -1746,6 +1794,7 @@ system_guard_command() {
   if ! restore_system_dns; then
     warn "DNS restore failed in cleanup guard. Run './jam-usb-internet system-recover' after reopening Terminal."
   fi
+  repair_stale_local_socks_proxy
   stop_sing_box_processes
   relay_stop_command || true
   dscacheutil -flushcache >/dev/null 2>&1 || true
@@ -2014,6 +2063,7 @@ system_command() {
     if ! restore_system_dns; then
       warn "DNS restore failed during cleanup. Run './jam-usb-internet system-stop' and verify Wi-Fi DNS."
     fi
+    repair_stale_local_socks_proxy
     stop_sing_box_processes
     relay_stop_command || true
     rm -f "$SING_BOX_PID_FILE"
@@ -2091,6 +2141,7 @@ system_stop_command() {
   delete_manual_tun_routes
   disable_dynamic_local_dns
   restore_system_dns || warn "DNS restore reported a problem. Try: ./jam-usb-internet system-recover"
+  repair_stale_local_socks_proxy
   stop_sing_box_processes
   relay_stop_command || true
   disarm_system_guard
@@ -2191,6 +2242,7 @@ system_recover_command() {
   if ! restore_system_dns; then
     warn "DNS restore from backup failed; stale local DNS repair was attempted."
   fi
+  repair_stale_local_socks_proxy
   stop_sing_box_processes
   relay_stop_command || true
   proxy_stop_command || true
@@ -2291,6 +2343,11 @@ system_status_command() {
     say "  session: active"
   else
     say "  session: none"
+  fi
+  if [[ -s "$SYSTEM_GUARD_LABEL_FILE" ]]; then
+    say "  label: $(< "$SYSTEM_GUARD_LABEL_FILE")"
+  else
+    say "  label: none"
   fi
   say "  log: $SYSTEM_GUARD_LOG"
   say ""

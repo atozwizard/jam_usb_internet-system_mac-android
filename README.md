@@ -100,7 +100,7 @@ To inspect or stop:
 
 Abnormal close behavior:
 
-- `system` starts a cleanup guard before modifying TUN routes or DNS.
+- `system` starts a `launchctl` cleanup guard before modifying TUN routes or DNS.
 - If the system-mode terminal is force-closed, the guard should notice that the main session disappeared and run recovery automatically.
 - If normal Wi-Fi still does not work a few seconds after a forced close, run `Galaxy System Stop.command` or `./jam-usb-internet system-recover`.
 
@@ -147,3 +147,10 @@ Completion indicators:
 - KakaoTalk/macOS reachability reports `talk.kakao.com` as reachable.
 - git can run `git ls-remote https://github.com/git/git.git HEAD`.
 - UDP-heavy features such as Discord voice/video are outside the current TCP/DNS milestone.
+
+Current field status:
+
+- Galaxy Wi-Fi path: internet and KakaoTalk work with Mac Wi-Fi off.
+- Galaxy LTE path: general internet works; Discord can work; KakaoTalk may still fail and remains an app-compatibility target.
+- Normal stop with `system-stop` restores Mac Wi-Fi.
+- Forced terminal close is protected by a cleanup guard, but `system-recover` remains the manual fallback.

@@ -738,14 +738,16 @@ Internet works
 KakaoTalk works
 ```
 
-User validation result:
+Earlier user validation result:
 
 ```text
 Mac Wi-Fi off
 Galaxy LTE connected
 Internet works
-KakaoTalk works
+KakaoTalk reported working in this run
 ```
+
+Later Session 11 results supersede the LTE KakaoTalk conclusion: LTE can carry general internet, but KakaoTalk can fail.
 
 Normal stop result:
 
@@ -789,6 +791,67 @@ Status after this session:
 - Normal stop path works.
 - Abnormal close recovery has code support and needs field validation by force-closing a system-mode window.
 
+### Session 11: 2026-05-30 LTE App Variance and Guard Failure
+
+User validation order:
+
+1. Mac Wi-Fi off, Galaxy Wi-Fi connected:
+   - Internet works.
+2. Mac Wi-Fi off, Galaxy LTE connected:
+   - Chrome works.
+   - Claude works.
+   - KakaoTalk fails.
+   - Discord initially fails.
+3. Mac Wi-Fi connected, Galaxy USB disconnected, system session force-closed by closing Terminal:
+   - General internet fails.
+   - KakaoTalk still works.
+4. Mac Wi-Fi connected, USB reconnected, `system-recover` run:
+   - General internet recovers.
+   - USB can then be disconnected and normal internet still works.
+5. Mac Wi-Fi off, Galaxy LTE connected, after retry/recovery:
+   - Chrome works.
+   - Claude works.
+   - Discord works.
+   - KakaoTalk fails.
+6. Normal `system-stop`, USB disconnected, Mac Wi-Fi connected:
+   - Normal internet works.
+
+Interpretation:
+
+- Galaxy Wi-Fi path is now the best validated target path.
+- Galaxy LTE path can carry general internet and Discord, but KakaoTalk remains unreliable or blocked on that path.
+- Normal stop is reliable.
+- The first cleanup guard implementation did not reliably recover after a real Terminal force-close.
+- The force-close symptom may include stale route/DNS state and/or stale local SOCKS proxy state because `system-recover` fixed the condition.
+
+Patch applied after this session:
+
+- Guard launch changed from background `nohup` to `sudo launchctl submit`.
+- The guard now runs outside the closing Terminal's process group.
+- The old `nohup` guard remains as fallback if `launchctl submit` fails.
+- Guard label is recorded in state and shown by `system-status`.
+- Cleanup now repairs stale local SOCKS proxies only when they point to this tool's local ports.
+- Preclean, normal cleanup, guard cleanup, `system-stop`, and `system-recover` all run the targeted stale SOCKS repair.
+
+Next validation:
+
+- Start system mode and confirm the log says:
+
+  ```text
+  Started abnormal-exit cleanup guard (... label com.atozwizard.jam-usb-internet.guard...)
+  ```
+
+- Force-close Terminal.
+- Wait 5-10 seconds.
+- Reconnect Mac Wi-Fi.
+- Confirm general internet works without manual recovery.
+- If it fails, run `system-recover` and inspect:
+
+  ```zsh
+  ./jam-usb-internet system-status
+  tail -80 ~/.jam-usb-internet/system-guard.log
+  ```
+
 ## 10. Current Known State
 
 Known working:
@@ -806,13 +869,14 @@ Known working:
 - `app-check` on normal Wi-Fi.
 - Local Git author config is now `atozwizard`.
 - Mac Wi-Fi off + Galaxy Wi-Fi connected: internet works, KakaoTalk works.
-- Mac Wi-Fi off + Galaxy LTE connected: internet works, KakaoTalk works.
+- Mac Wi-Fi off + Galaxy LTE connected: Chrome/Claude/general internet works; Discord can work after retry/recovery.
 - Mac Wi-Fi connected + Galaxy disconnected: normal Mac internet works after `system-stop`.
 
 Known failing:
 
-- Abnormal terminal/window close can leave Mac networking unrecovered in the pre-guard build.
-- Cleanup guard behavior after forced close is implemented but still needs field validation.
+- Galaxy LTE path: KakaoTalk can fail even when Chrome/Claude/Discord work.
+- Abnormal terminal/window close can leave Mac networking unrecovered in the pre-launchctl-guard build.
+- Launchctl cleanup guard behavior after forced close is implemented but still needs field validation.
 
 ## 11. Current Blockers
 
@@ -831,10 +895,11 @@ Impact:
 
 Current patch:
 
-- Add cleanup guard for abnormal system-mode exits.
+- Launch cleanup guard for abnormal system-mode exits through `sudo launchctl submit`.
 - Make guard refuse to start system mode if it cannot be launched.
 - Disarm guard only after normal cleanup is complete.
 - Make preclean restore route state before stopping old TUN engine.
+- Repair stale local SOCKS proxy settings for this tool's local ports.
 
 Required test:
 
@@ -851,7 +916,39 @@ Fallback if this test fails:
 ./jam-usb-internet system-recover
 ```
 
-### Blocker B: Packaging Not Yet Started
+### Blocker B: KakaoTalk on Galaxy LTE
+
+Symptom:
+
+```text
+Mac Wi-Fi off + Galaxy LTE connected
+Chrome/Claude/general internet works
+Discord can work
+KakaoTalk fails
+```
+
+Impact:
+
+- Galaxy LTE path is not yet a full completion pass.
+- Galaxy Wi-Fi path remains the stronger target path.
+
+Required next diagnostic:
+
+Run while system mode is active on Galaxy LTE:
+
+```zsh
+./jam-usb-internet app-check
+./jam-usb-internet system-status
+```
+
+and record whether the failing part is:
+
+- Kakao HTTPS
+- Kakao TCP
+- KakaoTalk macOS reachability
+- KakaoTalk app behavior only
+
+### Blocker C: Packaging Not Yet Started
 
 Packaging should wait until:
 
@@ -877,8 +974,10 @@ Status:
 Status:
 
 ```text
-KakaoTalk works in target Galaxy Wi-Fi and Galaxy LTE conditions.
+KakaoTalk works in target Galaxy Wi-Fi conditions.
 ```
+
+Galaxy LTE remains a separate app-compatibility blocker.
 
 ## 12. Risk Register
 

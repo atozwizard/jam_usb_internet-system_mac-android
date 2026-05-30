@@ -272,7 +272,7 @@ User validation after the nonfatal route patch:
 
 ```text
 Mac Wi-Fi off + Galaxy Wi-Fi connected: internet works, KakaoTalk works.
-Mac Wi-Fi off + Galaxy LTE connected: internet works, KakaoTalk works.
+Mac Wi-Fi off + Galaxy LTE connected: general internet works; KakaoTalk result is inconsistent and later failed.
 ```
 
 ### 7.5 Current Patch
@@ -330,7 +330,13 @@ USB/ADB connected
 Passed outcomes:
 
 - Internet works.
-- KakaoTalk works.
+- Chrome works.
+- Claude works.
+- Discord can work after retry/recovery.
+
+Known LTE app gap:
+
+- KakaoTalk can fail on Galaxy LTE even when general internet works.
 
 Remaining validation:
 
@@ -439,15 +445,19 @@ Must:
 Current implementation:
 
 - `system` starts a cleanup guard before modifying TUN routes or DNS.
+- The preferred guard launch path is `sudo launchctl submit`, which runs outside the closing Terminal's process group.
+- The older `nohup` background guard remains as fallback if `launchctl submit` fails.
 - The guard runs with administrator privileges so it can recover routes/DNS without a terminal prompt.
 - The guard monitors the main system-mode process.
 - If the main process disappears without normal disarm, the guard runs recovery cleanup automatically.
-- `system-status` reports guard pid, session state, and log path.
+- Cleanup also repairs stale local SOCKS proxies when they point to this tool's local ports.
+- `system-status` reports guard pid, launchctl label, session state, and log path.
 
 Current validation state:
 
 - Unit-style disarm test passed with a temporary state directory.
-- Field validation still needed by force-closing an active system-mode terminal.
+- First field validation with the original guard failed.
+- Field validation is still needed with the launchctl guard.
 
 ### 9.4 Documentation
 
@@ -520,7 +530,8 @@ app-check passes.
 In Mac Wi-Fi-off target state:
 
 ```text
-internet works through Galaxy Wi-Fi and Galaxy LTE; KakaoTalk works.
+Galaxy Wi-Fi path works including KakaoTalk.
+Galaxy LTE path carries general internet; KakaoTalk can fail.
 ```
 
 ### 10.4 Remaining Work
@@ -528,6 +539,7 @@ internet works through Galaxy Wi-Fi and Galaxy LTE; KakaoTalk works.
 - Confirm `app-check` while system mode is active in the target state.
 - Confirm Discord text/API path during the same target-state run.
 - Field-test abnormal-close cleanup guard.
+- Diagnose KakaoTalk failure on Galaxy LTE with `app-check` and `system-status`.
 - Defer Discord voice/video until UDP strategy exists.
 
 ## 11. Stage 8: Packaging
@@ -727,7 +739,9 @@ Expected:
 
 Expected:
 
-- same as Galaxy Wi-Fi path.
+- Chrome/general internet works.
+- Discord text/API should work after the current routing fixes.
+- KakaoTalk is not yet proven on LTE and remains a blocker.
 - `--mobile-only` may be used to force phone LTE.
 
 ### 14.4 Abnormal Close
