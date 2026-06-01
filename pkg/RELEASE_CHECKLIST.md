@@ -36,7 +36,10 @@ sing-box check -c configs/sing-box.template.json
 ./jam-usb-internet doctor --json >/dev/null
 ./jam-usb-internet system-status --json >/dev/null
 ui/build-app.sh
+codesign --verify --deep --strict --verbose=2 "ui/build/Jam USB Internet.app"
 ```
+
+`ui/build-app.sh` 기본값은 local test용 ad-hoc signing이다.
 
 ## Android Relay Check
 
@@ -91,6 +94,41 @@ pkg/dist/jam-usb-internet-<version>/
   ...
 pkg/dist/jam-usb-internet-<version>.zip
 pkg/dist/jam-usb-internet-<version>.zip.sha256
+```
+
+Unzip integrity:
+
+```zsh
+unzip -t pkg/dist/jam-usb-internet-<version>.zip
+rm -rf /tmp/jam-usb-internet-release-check
+mkdir -p /tmp/jam-usb-internet-release-check
+unzip -q pkg/dist/jam-usb-internet-<version>.zip -d /tmp/jam-usb-internet-release-check
+codesign --verify --deep --strict --verbose=2 \
+  "/tmp/jam-usb-internet-release-check/jam-usb-internet-<version>/Jam USB Internet.app"
+```
+
+## Developer ID Release
+
+Ad-hoc signing is sufficient only for local structural testing.
+
+External distribution without manual bypass:
+
+```text
+Developer ID Application signing
+Apple notarization
+```
+
+Build with a configured Developer ID certificate:
+
+```zsh
+JAM_USB_SIGN_IDENTITY="Developer ID Application: YOUR NAME (TEAMID)" \
+  pkg/build-dist.sh
+```
+
+Then follow:
+
+```text
+pkg/CODE_SIGNING.md
 ```
 
 GUI smoke check after unzip:

@@ -619,19 +619,27 @@ Compatibility:
 
 ### 11.3 Later Packaging Step
 
-Create a small macOS `.app` wrapper with:
+The small macOS `.app` wrapper now exists with:
 
 - Start button
 - Stop button
 - Status display
 - Recovery button
 
-### 11.4 Not Yet Planned in Detail
+Current GUI wrapper status:
+
+- SwiftUI wrapper exists under `ui/`.
+- Completed app bundle now receives an explicit structural signature.
+- Distribution build verifies signature integrity before and after zip extraction.
+- Default signature is ad-hoc for local testing.
+- Developer ID Application signing and Apple notarization remain required for a Gatekeeper-clean external release.
+
+### 11.4 Remaining Packaging Work
 
 - LaunchAgent
 - Menu bar app
-- Code signing
-- Notarization
+- Developer ID Application certificate provisioning
+- Apple notarization credential setup and release flow
 
 ## 12. Stage 9: Git and GitHub Project Hygiene
 
@@ -869,6 +877,8 @@ Needed for daily usability:
 - No terminal command memorization
 - Clear on/off/status
 - Safe recovery button
+- Developer ID certificate setup
+- Apple notarization flow
 
 ### 15.4 Observability
 

@@ -99,6 +99,12 @@ Apple Silicon Mac에서는 새 USB/Thunderbolt accessory가 Mac과 통신하기 
 
 이 패키지는 현재 코드서명/notarization된 앱이 아니다.
 
+로컬 테스트용 app bundle은 ad-hoc signing으로 구조 검증을 통과한다. 다른 Mac에 경고 없이 배포하려면 Developer ID Application certificate와 Apple notarization이 필요하다. 자세한 내용:
+
+```text
+docs/CODE_SIGNING.md
+```
+
 배포 zip을 직접 만든 신뢰 가능한 파일로 쓰는 경우에만 다음 중 하나를 사용한다.
 
 권장:

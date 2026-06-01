@@ -12,7 +12,7 @@ set -u
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin:${PATH:-}"
 
 APP_NAME="jam-usb-internet"
-VERSION="0.4.4"
+VERSION="0.4.5"
 SCRIPT_DIR="${0:a:h}"
 STATE_DIR="${JAM_USB_STATE_DIR:-${HOME}/.jam-usb-internet}"
 ORDER_BACKUP="${STATE_DIR}/network-services.before"
@@ -136,8 +136,8 @@ route_interface_for_public() {
 }
 
 collect_adb_json_state() {
-  local found=0 authorized=0 serial="" path="" model="" manufacturer=""
-  if path="$(find_adb)"; then
+  local found=0 authorized=0 serial="" adb_path="" model="" manufacturer=""
+  if adb_path="$(find_adb)"; then
     found=1
     if start_adb_if_available && select_adb_device_now; then
       authorized=1
@@ -148,7 +148,7 @@ collect_adb_json_state() {
   fi
   print -r -- "\"adb\": {"
   print -r -- "  \"found\": $(json_bool found),"
-  print -r -- "  \"path\": $(json_string_or_null "$path"),"
+  print -r -- "  \"path\": $(json_string_or_null "$adb_path"),"
   print -r -- "  \"authorized\": $(json_bool authorized),"
   print -r -- "  \"serial\": $(json_string_or_null "$serial"),"
   print -r -- "  \"manufacturer\": $(json_string_or_null "$manufacturer"),"

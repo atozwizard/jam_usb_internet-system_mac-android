@@ -51,6 +51,7 @@ pkg/dist/jam-usb-internet-<version>.zip.sha256
   - `docs/MAC_SETUP.md`
   - `docs/USAGE.md`
   - `docs/PREINSTALL_SECURITY_REVIEW.md`
+  - `docs/CODE_SIGNING.md`
   - `docs/RELEASE_CHECKLIST.md`
   - `docs/reference/`
 
@@ -73,8 +74,10 @@ pkg/build-dist.sh
 
 GUI 앱 소스는 `ui/JamUSBInternet/`에 있고, `ui/build-app.sh`가 `Jam USB Internet.app`을 만든다.
 
+`ui/build-app.sh`는 완성된 app bundle을 서명하고 `codesign --verify --deep --strict`로 검증한다. 기본값은 로컬 테스트용 ad-hoc 서명이다. 외부 배포용 Gatekeeper 통과 빌드는 Developer ID Application certificate와 Apple notarization이 필요하다. 자세한 내용은 `pkg/CODE_SIGNING.md`를 본다.
+
 ## Next Packaging Stage
 
-- code signing / notarization for the GUI app
+- Developer ID code signing / notarization for the GUI app
 - menu bar on/off/recover companion
 - optional signed/notarized `.pkg` installer

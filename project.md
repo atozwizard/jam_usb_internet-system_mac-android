@@ -1247,6 +1247,131 @@ Version:
 0.4.4
 ```
 
+### Session 18: 2026-06-01 GUI App Damaged Error Analysis
+
+User report:
+
+```text
+M3/M4 MacBook에서 .app 파일이 손상된 파일로 읽혀 실행되지 않음.
+.command shell fallback은 정상 작동.
+```
+
+Reproduction:
+
+```zsh
+ui/build-app.sh
+codesign --verify --deep --strict --verbose=4 "ui/build/Jam USB Internet.app"
+```
+
+Original result:
+
+```text
+code has no resources but signature indicates they must be present
+```
+
+Root cause:
+
+- `swiftc` generated an arm64 Mach-O executable with a linker ad-hoc signature.
+- The build script assembled an `.app` bundle after compilation but did not sign the completed bundle.
+- The bundle lacked:
+
+  ```text
+  Contents/_CodeSignature/CodeResources
+  ```
+
+- The packaged zip preserved this malformed bundle.
+- Gatekeeper could therefore report that the app was damaged.
+
+Not the cause:
+
+- M3/M4 CPU architecture.
+- Both M3 and M4 are compatible with the current:
+
+  ```text
+  Mach-O 64-bit executable arm64
+  ```
+
+Fix:
+
+- Bumped version to:
+
+  ```text
+  0.4.5
+  ```
+
+- Updated:
+
+  ```text
+  ui/build-app.sh
+  ```
+
+  so it signs the completed bundle and runs:
+
+  ```zsh
+  codesign --verify --deep --strict --verbose=2 "Jam USB Internet.app"
+  ```
+
+- Updated:
+
+  ```text
+  pkg/build-dist.sh
+  ```
+
+  so it verifies:
+
+  - source app after UI build
+  - copied app in distribution folder
+  - extracted app after zip creation
+
+- Added:
+
+  ```text
+  pkg/CODE_SIGNING.md
+  ```
+
+Current signing tiers:
+
+```text
+Default build: ad-hoc signature for local structural testing.
+External polished distribution: Developer ID Application certificate + Apple notarization.
+```
+
+Current local machine status:
+
+```text
+security find-identity -v -p codesigning
+0 valid identities found
+```
+
+Implication:
+
+- Local structural corruption is fixed.
+- This Mac cannot yet produce a Gatekeeper-clean external release without configuring a Developer ID certificate and notarization credentials.
+- `spctl --assess` rejection is still expected for the current ad-hoc build.
+
+Additional self-repair:
+
+- JSON status collection used:
+
+  ```zsh
+  local path=""
+  ```
+
+- In zsh, lowercase `path` is tied to `PATH`.
+- This temporarily emptied command lookup and produced:
+
+  ```text
+  command not found: awk
+  ```
+
+- Renamed the variable to:
+
+  ```zsh
+  adb_path
+  ```
+
+- `doctor --json` and `system-status --json` now run without that warning.
+
 ## 10. Current Known State
 
 Known working:
@@ -1270,12 +1395,15 @@ Known working:
 - Manual `system-recover` restores normal Mac internet after forced terminal close.
 - Portable distribution packaging exists under `pkg/`.
 - Preinstall/security review is documented under `pkg/PREINSTALL_SECURITY_REVIEW.md`.
+- GUI app bundle structural signing is fixed and verified after zip extraction.
+- Current default GUI build is ad-hoc signed for local testing.
 
 Known failing:
 
 - Abnormal terminal/window close can still leave general Mac internet unavailable until `system-recover` is run.
 - Switching Galaxy LTE/Wi-Fi while the tunnel is active can interrupt the phone network briefly and terminate the tunnel process.
 - Discord voice/video is not guaranteed because the current milestone is TCP/DNS, not UDP.
+- Gatekeeper-clean external GUI distribution is not available until Developer ID signing and Apple notarization are configured.
 
 ## 11. Current Blockers
 

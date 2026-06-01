@@ -211,7 +211,15 @@ The generated zip includes:
 - Galaxy setup guide for Note 9 and Fold
 - Mac setup guide for Apple Silicon / M3 Pro security prompts
 - preinstall/security review for Homebrew dependencies, Android File Transfer, and macOS security policy
+- code-signing review for local ad-hoc builds and Developer ID/notarized releases
 - usage guide and release checklist
 - Android relay binary and sing-box config template
 
 Generated files are written under `pkg/dist/` and are not committed to git.
+
+GUI signing note:
+
+- `ui/build-app.sh` now signs and verifies the completed app bundle.
+- The default ad-hoc signature is for local testing.
+- External distribution without manual bypass requires Developer ID Application signing and Apple notarization.
+- See `pkg/CODE_SIGNING.md`.
