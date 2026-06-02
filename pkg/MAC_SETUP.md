@@ -105,7 +105,7 @@ Apple Silicon Mac에서는 새 USB/Thunderbolt accessory가 Mac과 통신하기 
 docs/CODE_SIGNING.md
 ```
 
-배포 zip을 직접 만든 신뢰 가능한 파일로 쓰는 경우에만 다음 중 하나를 사용한다.
+배포 zip을 직접 만들었거나 신뢰 가능한 담당자에게 받은 경우에만 다음 중 하나를 사용한다.
 
 권장:
 
@@ -113,15 +113,28 @@ docs/CODE_SIGNING.md
 2. `Open`을 선택한다.
 3. macOS 경고창에서 다시 `Open`을 선택한다.
 
-로컬에서 직접 빌드한 zip을 풀었고 quarantine 때문에 실행이 막힐 때:
+ZIP과 함께 받은 `.sha256` 파일을 같은 폴더에 둔다.
+
+```text
+jam-usb-internet-<version>.zip
+jam-usb-internet-<version>.zip.sha256
+```
+
+quarantine 때문에 앱 실행이 막힐 때는 먼저 체크섬을 검증하고, 압축을 푼 배포 폴더에만 quarantine 해제를 적용한다.
 
 ```zsh
-xattr -dr com.apple.quarantine /path/to/jam-usb-internet-<version>
+cd /path/to/download-directory
+shasum -a 256 -c jam-usb-internet-<version>.zip.sha256
+unzip jam-usb-internet-<version>.zip
+xattr -dr com.apple.quarantine jam-usb-internet-<version>
 ```
 
 주의:
 
+- 체크섬 검증 결과가 `OK`일 때만 다음 단계로 진행한다.
 - 출처를 모르는 zip에는 이 명령을 쓰지 않는다.
+- 체크섬이 맞지 않으면 압축을 풀거나 실행하지 말고 새 파일을 받는다.
+- `xattr`는 압축을 푼 `jam-usb-internet-<version>` 폴더에만 적용한다.
 - 이 프로젝트는 USB debugging과 관리자 권한을 사용하므로 신뢰 경계를 명확히 해야 한다.
 
 ## 6. 관리자 권한

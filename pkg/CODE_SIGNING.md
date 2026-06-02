@@ -148,13 +148,16 @@ The observed damaged-app error is a signing/package-integrity problem, not an M3
 
 ## 8. Local Test Bypass
 
-For a trusted local development build only, the user may right-click the app and choose `Open`, or remove quarantine after verifying the SHA256 checksum.
+For a trusted local development build only, the user may right-click the app and choose `Open`, or remove quarantine after verifying the supplied SHA256 checksum file.
 
 ```zsh
-xattr -dr com.apple.quarantine "/path/to/jam-usb-internet-<version>"
+cd /path/to/download-directory
+shasum -a 256 -c jam-usb-internet-<version>.zip.sha256
+unzip jam-usb-internet-<version>.zip
+xattr -dr com.apple.quarantine jam-usb-internet-<version>
 ```
 
-This is not the final distribution strategy.
+Continue only if checksum verification prints `OK`. Do not remove quarantine from an unknown or checksum-mismatched ZIP. This is not the final distribution strategy.
 
 Do not:
 

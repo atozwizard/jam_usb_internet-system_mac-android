@@ -980,3 +980,45 @@ Keep application trust work separate from runtime guard compatibility:
 - Ad-hoc app signing verifies bundle integrity only.
 - External `.app` distribution without a manual bypass requires Developer ID Application signing and Apple notarization.
 - Do not lower SIP, Gatekeeper, or Startup Security as a workaround.
+
+## 17. Trusted ZIP Free-Distribution Guidance
+
+### 17.1 Goal
+
+Support internal or trusted-recipient use without requiring Developer ID membership while preserving a clear trust boundary.
+
+### 17.2 Packaging Change
+
+- Bump the portable distribution to `0.4.7`.
+- Generate `.zip.sha256` with the ZIP basename instead of a developer-machine absolute path.
+- Keep the ZIP and `.sha256` file together as the recipient handoff pair.
+
+### 17.3 Recipient Flow
+
+```zsh
+cd /path/to/download-directory
+shasum -a 256 -c jam-usb-internet-<version>.zip.sha256
+unzip jam-usb-internet-<version>.zip
+xattr -dr com.apple.quarantine jam-usb-internet-<version>
+cd jam-usb-internet-<version>
+```
+
+Proceed only when checksum verification prints `OK`.
+
+### 17.4 Security Rules
+
+- Apply `xattr` only to the extracted folder from a trusted and checksum-matched ZIP.
+- Do not run an unknown or checksum-mismatched ZIP.
+- Do not disable Gatekeeper globally.
+- Do not disable SIP.
+- Do not lower macOS Startup Security.
+
+### 17.5 Completed Validation
+
+- `zsh -n jam-usb-internet`
+- `zsh -n pkg/build-dist.sh`
+- `git diff --check`
+- `pkg/build-dist.sh`
+- recipient-style `shasum -a 256 -c jam-usb-internet-0.4.7.zip.sha256`
+- ZIP integrity check
+- strict app-bundle signature verification

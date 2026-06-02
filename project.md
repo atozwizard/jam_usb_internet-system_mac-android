@@ -1705,3 +1705,69 @@ Collect the full output before running `system`. If `guard-check` passes, contin
 ./jam-usb-internet app-check
 ./jam-usb-internet system-stop
 ```
+
+## 15. Session Record: 2026-06-02 Trusted ZIP Quarantine Guidance
+
+### 15.1 Request
+
+Document the free-distribution path for another Mac:
+
+- use the ad-hoc signed `.app` bundle without purchasing a Developer ID membership;
+- remove quarantine only for a trusted ZIP;
+- do not weaken system-wide Mac security.
+
+### 15.2 Self-Critique
+
+The previous package already generated:
+
+```text
+jam-usb-internet-<version>.zip.sha256
+```
+
+but its checksum line contained the developer Mac's absolute ZIP path. That was inconvenient for a recipient because `shasum -c` should work from the recipient's download directory without editing the checksum file.
+
+### 15.3 Implemented Repair
+
+Version `0.4.7` changes packaging and documentation:
+
+1. Generate the SHA256 file from inside `pkg/dist`, so it records the ZIP basename only.
+2. Include trusted-ZIP setup steps in generated `START_HERE.txt`.
+3. Add the same procedure to the project README and package guides.
+4. Require checksum verification before quarantine removal.
+5. Explicitly forbid applying `xattr` to an unknown or checksum-mismatched ZIP.
+6. Keep Gatekeeper, SIP, and macOS Startup Security enabled.
+
+### 15.4 Recipient Procedure
+
+Place both files in the same trusted download directory:
+
+```text
+jam-usb-internet-<version>.zip
+jam-usb-internet-<version>.zip.sha256
+```
+
+Then run:
+
+```zsh
+cd /path/to/download-directory
+shasum -a 256 -c jam-usb-internet-<version>.zip.sha256
+unzip jam-usb-internet-<version>.zip
+xattr -dr com.apple.quarantine jam-usb-internet-<version>
+```
+
+Continue only if the checksum command prints:
+
+```text
+jam-usb-internet-<version>.zip: OK
+```
+
+### 15.5 Validation
+
+Validated with the generated `0.4.7` artifact:
+
+```text
+portable shasum -c verification: passed
+ZIP integrity: passed
+strict app-bundle codesign verification: passed
+generated START_HERE instructions: verified
+```

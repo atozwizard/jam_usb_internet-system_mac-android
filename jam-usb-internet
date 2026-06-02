@@ -12,7 +12,7 @@ set -u
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin:${PATH:-}"
 
 APP_NAME="jam-usb-internet"
-VERSION="0.4.6"
+VERSION="0.4.7"
 SCRIPT_DIR="${0:a:h}"
 STATE_DIR="${JAM_USB_STATE_DIR:-${HOME}/.jam-usb-internet}"
 ORDER_BACKUP="${STATE_DIR}/network-services.before"

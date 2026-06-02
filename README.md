@@ -41,6 +41,28 @@ Galaxy System Stop.command
 
 Use **OFF** / **끄기** for normal shutdown. Use **RECOVER** / **복구** if a session was force-closed or normal Mac Wi-Fi internet does not come back.
 
+## Trusted ZIP Setup on Another Mac
+
+The current free distribution uses an ad-hoc signed app bundle. On another Mac, remove quarantine only after verifying a ZIP received from a trusted source.
+
+Place both release files in the same download directory:
+
+```text
+jam-usb-internet-<version>.zip
+jam-usb-internet-<version>.zip.sha256
+```
+
+Then run:
+
+```zsh
+cd /path/to/download-directory
+shasum -a 256 -c jam-usb-internet-<version>.zip.sha256
+unzip jam-usb-internet-<version>.zip
+xattr -dr com.apple.quarantine jam-usb-internet-<version>
+```
+
+Continue only if checksum verification prints `OK`. Do not remove quarantine from an unknown ZIP or a checksum-mismatched ZIP. Do not disable Gatekeeper globally, disable SIP, or lower macOS Startup Security.
+
 ## Phone Setup
 
 On the Galaxy Note 9:
