@@ -1598,3 +1598,110 @@ If the terminal was force-closed or normal Wi-Fi does not recover, users should 
 ```text
 Galaxy USB Internet RECOVER.command
 ```
+
+## 14. Session Record: 2026-06-02 Galaxy Flip and M3 Cleanup Guard Failure
+
+### 14.1 Field Environment
+
+- Mac account home: `/Users/knocklab`
+- Mac model class: Apple Silicon M3
+- Android device class: Galaxy Flip
+- Entry point: packaged `.command` shell launcher
+
+### 14.2 Field Log
+
+The relay preparation completed before the failure:
+
+```text
+[ok] System mode is ready to start.
+[info] TUN routing and local DNS setup need macOS administrator permission.
+[info] Keep this terminal open. Press Ctrl-C to stop and clean up.
+
+[warn] Could not start abnormal-exit cleanup guard. See: /Users/knocklab/.jam-usb-internet/system-guard.log
+[fail] Could not start abnormal-exit cleanup guard; refusing to modify TUN routes/DNS.
+[ok] Stopped Android relay if it was running.
+[ok] Removed ADB forward tcp:18080 if it existed.
+```
+
+### 14.3 Failure Boundary
+
+The failure occurred after Android relay checks and before TUN route or DNS mutation.
+
+This means:
+
+- Galaxy USB debugging authorization was sufficient to upload and run the relay.
+- ADB forwarding was sufficient to validate relay connectivity.
+- The failure was not evidence that Galaxy Flip USB data mode, Galaxy Wi-Fi/LTE, or Android relay connectivity had failed.
+- The script correctly failed closed before changing Mac networking.
+
+### 14.4 Cleanup Guard Defect
+
+The previous startup implementation had a narrow readiness window:
+
+```text
+20 attempts * 0.1 seconds = 2 seconds
+```
+
+If privileged `launchctl submit` returned success but the guard process did not create `system-guard.pid` within that window, startup failed immediately. The fallback path was used only when `launchctl submit` returned a non-zero status. A slow successful launch could therefore fail without trying the fallback.
+
+### 14.5 Implemented Repair
+
+Version `0.4.6` changes cleanup guard startup:
+
+1. Wait up to 10 seconds for the submitted `launchctl` guard.
+2. Treat a PID file as ready only when it contains a numeric PID and that process is alive.
+3. Try an absolute-path `/usr/bin/nohup /usr/bin/env ...` fallback when `launchctl` fails or does not become ready in time.
+4. Redirect fallback stdin from `/dev/null`.
+5. Write parent-side diagnostics to `~/.jam-usb-internet/system-guard.log`.
+6. Print the last 20 guard-log lines when both startup methods fail.
+7. Add `guard-check`, which tests guard start and disarm without modifying routes or DNS.
+
+### 14.6 Local Validation
+
+Validated on the development Mac with isolated temporary state directories:
+
+```text
+direct system-guard launch: passed
+user launchctl submit launch: passed
+nohup fallback launch: passed
+zsh syntax validation: passed
+```
+
+An interactive administrator-path validation is still required on the Galaxy Flip / M3 field Mac because the development shell had no cached non-interactive sudo credential.
+
+### 14.7 Authentication and Trust Separation
+
+There are separate trust boundaries:
+
+1. Android USB debugging authorization:
+   - required for ADB relay upload and forwarding;
+   - already passed far enough in the field log to reach system-mode readiness.
+2. macOS administrator authorization:
+   - required for cleanup guard, TUN route, DNS, and sing-box operations;
+   - the field failure occurred in this runtime area.
+3. macOS Gatekeeper trust for `Jam USB Internet.app`:
+   - ad-hoc signed local packages can still require manual opening or quarantine removal;
+   - polished external distribution requires Developer ID Application signing and Apple notarization;
+   - this is separate from the `.command` cleanup-guard failure.
+
+### 14.8 Next Field Procedure
+
+Before starting USB internet on the Galaxy Flip / M3 Mac:
+
+```zsh
+./jam-usb-internet guard-check
+```
+
+If it fails:
+
+```zsh
+tail -80 ~/.jam-usb-internet/system-guard.log
+```
+
+Collect the full output before running `system`. If `guard-check` passes, continue:
+
+```zsh
+./jam-usb-internet system
+./jam-usb-internet app-check
+./jam-usb-internet system-stop
+```

@@ -897,3 +897,86 @@ Needed before sharing broadly:
 - Verify relay binary integrity
 - Minimize phone-side lifetime
 - Clear cleanup path for `/data/local/tmp/knock-relay`
+
+## 16. Galaxy Flip / M3 Cleanup Guard Compatibility Work
+
+### 16.1 Trigger
+
+Field startup reached Android relay readiness but stopped before TUN route and DNS setup:
+
+```text
+[fail] Could not start abnormal-exit cleanup guard; refusing to modify TUN routes/DNS.
+```
+
+### 16.2 Immediate Priority
+
+Make cleanup-guard startup observable and tolerant of slow startup before continuing M3 field validation.
+
+### 16.3 Implemented Work
+
+- Increase privileged `launchctl` readiness wait from 2 seconds to 10 seconds.
+- Validate that the guard PID exists and is alive.
+- Add `nohup` fallback after both explicit `launchctl` failure and successful-but-not-ready `launchctl` timeout.
+- Use absolute `/usr/bin/nohup` and `/usr/bin/env` paths.
+- Redirect fallback stdin from `/dev/null`.
+- Record state directory, script path, launchctl return code, launchctl output, fallback PID, and terminal failure in `system-guard.log`.
+- Print recent guard log lines when startup cannot be established.
+- Add `guard-check` so a new Mac can validate the guard without modifying routes or DNS.
+
+### 16.4 Local Validation Completed
+
+- `zsh -n jam-usb-internet`
+- direct `system-guard` process lifecycle with isolated state directory
+- user-domain `launchctl submit` process lifecycle with isolated state directory
+- `/usr/bin/nohup` fallback process lifecycle with isolated state directory
+
+### 16.5 Required Field Validation
+
+On the Galaxy Flip / M3 Mac, unpack the new `0.4.6` distribution and run:
+
+```zsh
+./jam-usb-internet guard-check
+```
+
+Expected:
+
+```text
+[ok] Administrator credentials cached for cleanup guard check.
+[ok] Started abnormal-exit cleanup guard ...
+[ok] Cleanup guard check passed.
+```
+
+If the check fails, collect:
+
+```zsh
+tail -80 ~/.jam-usb-internet/system-guard.log
+```
+
+Do not proceed to `system` until `guard-check` passes.
+
+### 16.6 System Validation After Guard Check
+
+With Galaxy Wi-Fi or LTE connected and Mac Wi-Fi unavailable:
+
+```zsh
+./jam-usb-internet system
+./jam-usb-internet app-check
+./jam-usb-internet system-stop
+```
+
+Verify:
+
+- Chrome/web
+- Discord text/API
+- KakaoTalk
+- git over HTTPS
+- normal Mac Wi-Fi internet after `system-stop`
+
+### 16.7 Distribution Trust Workstream
+
+Keep application trust work separate from runtime guard compatibility:
+
+- The `.command` runtime path is the field fallback.
+- Ad-hoc app signing verifies bundle integrity only.
+- External `.app` distribution without a manual bypass requires Developer ID Application signing and Apple notarization.
+- Do not lower SIP, Gatekeeper, or Startup Security as a workaround.

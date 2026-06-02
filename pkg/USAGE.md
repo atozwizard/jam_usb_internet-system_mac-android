@@ -110,6 +110,7 @@ Galaxy USB Internet RECOVER.command
 
 ```zsh
 ./jam-usb-internet doctor
+./jam-usb-internet guard-check
 ./jam-usb-internet system --check-only
 ./jam-usb-internet system
 ./jam-usb-internet app-check
@@ -127,7 +128,29 @@ Galaxy LTE만 강제로 쓰고 싶을 때:
 
 `--mobile-only`는 phone Wi-Fi를 끄고 mobile data를 켜도록 Android에 요청한다. Galaxy 네트워크를 직접 바꾸는 일이므로 필요할 때만 쓴다.
 
-## 7. 설치하지 않아도 되는 것
+## 7. 새 Mac에서 cleanup guard 확인
+
+새 Mac에서 다음 오류가 나오면:
+
+```text
+[fail] Could not start abnormal-exit cleanup guard; refusing to modify TUN routes/DNS.
+```
+
+먼저 라우팅과 DNS를 바꾸지 않는 진단을 실행한다.
+
+```zsh
+./jam-usb-internet guard-check
+```
+
+`guard-check`는 관리자 권한 확인, `launchctl` 가드 시작, 정상 해제만 검증한다. `launchctl` 경로가 실패하거나 늦으면 대체 `nohup` 경로도 시도한다. USB 인터넷 라우팅은 설치하지 않는다.
+
+실패하면 다음 로그를 전달한다.
+
+```zsh
+tail -80 ~/.jam-usb-internet/system-guard.log
+```
+
+## 8. 설치하지 않아도 되는 것
 
 다음은 기본 사용에 필요 없다.
 

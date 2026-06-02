@@ -102,6 +102,7 @@ pkg/PREINSTALL_SECURITY_REVIEW.md
 ./jam-usb-internet proxy-stop
 ./jam-usb-internet system-status
 ./jam-usb-internet system-stop
+./jam-usb-internet guard-check
 ./jam-usb-internet status
 ./jam-usb-internet doctor
 ./jam-usb-internet restore
@@ -122,16 +123,19 @@ To inspect or stop:
 ./jam-usb-internet system-status
 ./jam-usb-internet system-stop
 ./jam-usb-internet system-recover
+./jam-usb-internet guard-check
 ./jam-usb-internet app-check
 ```
 
 `system-stop` also repairs stale local DNS if a failed run left a network service pointing at `127.0.0.1`.
 `system-recover` is the stronger panic button: it stops TUN/proxy/relay state, repairs stale DNS, and then checks Chrome-style HTTPS, Discord, Kakao, and git connectivity.
+`guard-check` starts and disarms only the abnormal-exit cleanup guard. It does not install TUN routes or change DNS. Run it before `system` when a new Mac reports `Could not start abnormal-exit cleanup guard`.
 `system --check-only` does not start the privileged TUN. It uploads the Android relay, starts the ADB forward, and checks Chrome/web, Discord, Kakao, and git-style HTTPS through the relay. If this fails, the blocker is Android relay/phone internet/DNS, not Mac TUN routing.
 
 Abnormal close behavior:
 
 - `system` starts a `launchctl` cleanup guard before modifying TUN routes or DNS.
+- Guard startup waits up to 10 seconds for `launchctl`, then tries a `nohup` fallback before refusing to modify networking.
 - Normal shutdown writes an explicit disarm token for that guard.
 - If the system-mode terminal is force-closed, the guard should notice that the main session disappeared and run recovery automatically.
 - Terminal `HUP`/`TERM` exits are treated as abnormal: the script cleans local state but keeps the guard armed.

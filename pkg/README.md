@@ -67,6 +67,7 @@ sing-box check -c configs/sing-box.template.json
 (cd android-relay && GOCACHE="$PWD/.gocache" go test ./...)
 ./jam-usb-internet doctor --json >/dev/null
 ./jam-usb-internet system-status --json >/dev/null
+./jam-usb-internet guard-check
 ./jam-usb-internet app-check
 ui/build-app.sh
 pkg/build-dist.sh

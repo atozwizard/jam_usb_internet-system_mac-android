@@ -12,7 +12,7 @@ set -u
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin:${PATH:-}"
 
 APP_NAME="jam-usb-internet"
-VERSION="0.4.5"
+VERSION="0.4.6"
 SCRIPT_DIR="${0:a:h}"
 STATE_DIR="${JAM_USB_STATE_DIR:-${HOME}/.jam-usb-internet}"
 ORDER_BACKUP="${STATE_DIR}/network-services.before"
@@ -52,6 +52,7 @@ CHECK_ONLY=0
 FORCE_TUN=0
 GUARD_PARENT_PID=""
 GUARD_TOKEN=""
+SYSTEM_GUARD_LAUNCHER_PID=""
 JSON_OUTPUT=0
 
 ADB_BIN=""
@@ -260,6 +261,7 @@ Usage:
   jam-usb-internet system-stop
   jam-usb-internet system-recover
   jam-usb-internet system-status
+  jam-usb-internet guard-check
   jam-usb-internet app-check
   jam-usb-internet proxy-stop
   jam-usb-internet status
@@ -305,6 +307,7 @@ Commands:
   system-stop             Stop Mac-wide TUN mode.
   system-recover          Aggressively restore normal Mac networking.
   system-status           Show whether Mac-wide TUN mode appears to be active.
+  guard-check              Validate abnormal-exit cleanup guard without changing routes/DNS.
   app-check               Check Chrome/Discord/Kakao/git-style TCP connectivity.
   proxy-stop              Turn off the macOS system SOCKS proxy set by this tool.
   status                  Print current USB/network/ADB status.
@@ -1936,8 +1939,63 @@ remove_stale_guard_jobs() {
   )
 }
 
+system_guard_log_parent() {
+  local message="$*"
+
+  print -r -- "$(date '+%Y-%m-%d %H:%M:%S') parent: ${message}" >> "$SYSTEM_GUARD_LOG" 2>/dev/null || true
+}
+
+system_guard_pid_is_ready() {
+  local guard_pid
+
+  [[ -s "$SYSTEM_GUARD_PID_FILE" ]] || return 1
+  guard_pid="$(< "$SYSTEM_GUARD_PID_FILE")"
+  if [[ "$guard_pid" == <-> ]] && kill -0 "$guard_pid" >/dev/null 2>&1; then
+    return 0
+  fi
+  rm -f "$SYSTEM_GUARD_PID_FILE"
+  return 1
+}
+
+wait_for_system_guard_ready() {
+  local attempts="${1:-100}"
+  local delay="${2:-0.1}"
+  local launcher_pid="${3:-}"
+  local i
+
+  for (( i = 1; i <= attempts; i++ )); do
+    if system_guard_pid_is_ready; then
+      return 0
+    fi
+    if [[ -n "$launcher_pid" ]] && ! kill -0 "$launcher_pid" >/dev/null 2>&1; then
+      system_guard_log_parent "fallback launcher exited before guard became ready (pid ${launcher_pid})"
+      return 1
+    fi
+    sleep "$delay"
+  done
+  return 1
+}
+
+launch_system_guard_nohup() {
+  local parent_pid="$1"
+  local token="$2"
+
+  if (( EUID == 0 )); then
+    /usr/bin/nohup /usr/bin/env "JAM_USB_STATE_DIR=$STATE_DIR" "$SCRIPT_DIR/jam-usb-internet" system-guard \
+      --guard-parent-pid "$parent_pid" \
+      --guard-token "$token" \
+      >> "$SYSTEM_GUARD_LOG" 2>&1 </dev/null &
+  else
+    run_privileged /usr/bin/nohup /usr/bin/env "JAM_USB_STATE_DIR=$STATE_DIR" "$SCRIPT_DIR/jam-usb-internet" system-guard \
+      --guard-parent-pid "$parent_pid" \
+      --guard-token "$token" \
+      >> "$SYSTEM_GUARD_LOG" 2>&1 </dev/null &
+  fi
+  SYSTEM_GUARD_LAUNCHER_PID=$!
+}
+
 start_system_guard() {
-  local parent_pid token launcher_pid i guard_pid label output rc
+  local parent_pid token launcher_pid="" guard_pid label output rc
 
   ensure_state_dir
   parent_pid="$$"
@@ -1948,6 +2006,9 @@ start_system_guard() {
   print -r -- "$label" > "$SYSTEM_GUARD_LABEL_FILE"
   touch "$SYSTEM_GUARD_LOG" >/dev/null 2>&1 || true
   rm -f "$SYSTEM_GUARD_PID_FILE" "$SYSTEM_GUARD_DISARM_FILE"
+  system_guard_log_parent "starting cleanup guard for parent ${parent_pid}"
+  system_guard_log_parent "state_dir=${STATE_DIR}"
+  system_guard_log_parent "script=${SCRIPT_DIR}/jam-usb-internet"
 
   output="$(
     run_privileged launchctl submit \
@@ -1959,41 +2020,36 @@ start_system_guard() {
         --guard-token "$token" 2>&1
   )"
   rc=$?
-  if (( rc != 0 )); then
-    debug "launchctl guard submit failed: $output"
-    warn "launchctl guard submit failed: ${output:-unknown error}"
-    if (( EUID == 0 )); then
-      nohup "$SCRIPT_DIR/jam-usb-internet" system-guard \
-        --guard-parent-pid "$parent_pid" \
-        --guard-token "$token" \
-        >> "$SYSTEM_GUARD_LOG" 2>&1 &
-      launcher_pid=$!
-    else
-      run_privileged env JAM_USB_STATE_DIR="$STATE_DIR" nohup "$SCRIPT_DIR/jam-usb-internet" system-guard \
-        --guard-parent-pid "$parent_pid" \
-        --guard-token "$token" \
-        >> "$SYSTEM_GUARD_LOG" 2>&1 &
-      launcher_pid=$!
-    fi
-  else
-    launcher_pid=""
-  fi
-
-  for (( i = 1; i <= 20; i++ )); do
-    if [[ -s "$SYSTEM_GUARD_PID_FILE" ]]; then
+  system_guard_log_parent "launchctl submit rc=${rc} output=${output:-<empty>}"
+  if (( rc == 0 )); then
+    if wait_for_system_guard_ready 100 0.1; then
       guard_pid="$(< "$SYSTEM_GUARD_PID_FILE")"
       ok "Started abnormal-exit cleanup guard (pid ${guard_pid}, label ${label})."
       return 0
     fi
-    if [[ -n "$launcher_pid" ]] && ! kill -0 "$launcher_pid" >/dev/null 2>&1; then
-      break
-    fi
-    sleep 0.1
-  done
+    system_guard_log_parent "launchctl guard did not become ready within 10 seconds; trying nohup fallback"
+  else
+    debug "launchctl guard submit failed: $output"
+    warn "launchctl guard submit failed: ${output:-unknown error}"
+    system_guard_log_parent "launchctl submit failed; trying nohup fallback"
+  fi
+
+  remove_guard_launchctl_label "$label"
+  rm -f "$SYSTEM_GUARD_PID_FILE"
+  launch_system_guard_nohup "$parent_pid" "$token"
+  launcher_pid="$SYSTEM_GUARD_LAUNCHER_PID"
+  system_guard_log_parent "nohup fallback launcher pid=${launcher_pid:-<empty>}"
+  if wait_for_system_guard_ready 100 0.1 "$launcher_pid"; then
+    guard_pid="$(< "$SYSTEM_GUARD_PID_FILE")"
+    ok "Started abnormal-exit cleanup guard fallback (pid ${guard_pid})."
+    return 0
+  fi
 
   rm -f "$SYSTEM_SESSION_FILE"
   remove_guard_launchctl_label "$label"
+  system_guard_log_parent "cleanup guard startup failed after launchctl and nohup attempts"
   warn "Could not start abnormal-exit cleanup guard. See: $SYSTEM_GUARD_LOG"
+  tail -20 "$SYSTEM_GUARD_LOG" 2>/dev/null || true
   return 1
 }
 
@@ -2060,6 +2116,29 @@ system_guard_command() {
   rm -f "$SYSTEM_SESSION_FILE" "$SYSTEM_GUARD_PID_FILE" "$SYSTEM_GUARD_DISARM_FILE" "$SYSTEM_GUARD_LABEL_FILE"
   ok "Cleanup guard finished."
   remove_guard_launchctl_label "$label"
+}
+
+guard_check_command() {
+  require_macos
+  ensure_state_dir
+  jam_usb_export_askpass
+
+  if (( EUID != 0 )); then
+    if ! ensure_admin_for_system; then
+      fail "Administrator permission is required for cleanup guard check."
+      return 1
+    fi
+    ok "Administrator credentials cached for cleanup guard check."
+  fi
+
+  if ! start_system_guard; then
+    fail "Cleanup guard check failed."
+    return 1
+  fi
+  sleep 1
+  disarm_system_guard
+  clear_sudo_askpass_cache
+  ok "Cleanup guard check passed."
 }
 
 monitor_phone_relay() {
@@ -2905,6 +2984,9 @@ main() {
       ;;
     system-status)
       system_status_command
+      ;;
+    guard-check)
+      guard_check_command
       ;;
     system-guard)
       system_guard_command

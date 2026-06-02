@@ -165,7 +165,24 @@ MacBook Pro M3 Pro는 Thunderbolt 4 / USB 4 포트를 가진다. ADB relay 방�
 
 다만 native Android USB tethering을 Mac USB LAN으로 인식하는 방식은 공식 Android 문서 기준으로 신뢰하지 않는다. 이 프로젝트는 그 경로를 기본으로 쓰지 않는다.
 
-## 8. 공식 문서 기준
+## 8. cleanup guard 진단
+
+새 Mac에서 다음 오류가 나오면 TUN 라우팅이나 DNS는 변경되지 않은 상태다.
+
+```text
+[fail] Could not start abnormal-exit cleanup guard; refusing to modify TUN routes/DNS.
+```
+
+다음을 실행한다.
+
+```zsh
+./jam-usb-internet guard-check
+tail -80 ~/.jam-usb-internet/system-guard.log
+```
+
+`guard-check`는 관리자 권한을 확인하고 비정상 종료 복구 가드만 시작했다가 해제한다. USB 인터넷 경로를 활성화하지 않는다.
+
+## 9. 공식 문서 기준
 
 - Homebrew android-platform-tools cask: https://formulae.brew.sh/cask/android-platform-tools
 - Homebrew sing-box formula: https://formulae.brew.sh/formula/sing-box

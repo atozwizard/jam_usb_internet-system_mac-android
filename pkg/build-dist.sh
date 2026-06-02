@@ -78,10 +78,11 @@ jam-usb-internet ${VERSION}
 7. Connect Galaxy by USB data cable.
 8. Set Galaxy USB mode to File Transfer / Android Auto.
 9. Authorize USB debugging.
-10. Double-click: Jam USB Internet.app
+10. On a new Mac, run ./jam-usb-internet guard-check once.
+11. Double-click: Jam USB Internet.app
    Fallback: Galaxy USB Internet ON.command
-11. Stop safely with the app's [끄기] button or Galaxy USB Internet OFF.command
-12. If normal Mac internet does not recover, use the app's [복구] button or Galaxy USB Internet RECOVER.command
+12. Stop safely with the app's [끄기] button or Galaxy USB Internet OFF.command
+13. If normal Mac internet does not recover, use the app's [복구] button or Galaxy USB Internet RECOVER.command
 
 Current milestone: TCP/DNS internet for Chrome, Discord text/API, KakaoTalk, and git.
 Known limits: forced close may need RECOVER; Discord voice/video UDP is not covered.
