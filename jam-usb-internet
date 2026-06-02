@@ -12,7 +12,7 @@ set -u
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin:${PATH:-}"
 
 APP_NAME="jam-usb-internet"
-VERSION="0.4.7"
+VERSION="0.4.8"
 SCRIPT_DIR="${0:a:h}"
 STATE_DIR="${JAM_USB_STATE_DIR:-${HOME}/.jam-usb-internet}"
 ORDER_BACKUP="${STATE_DIR}/network-services.before"
@@ -1945,15 +1945,32 @@ system_guard_log_parent() {
   print -r -- "$(date '+%Y-%m-%d %H:%M:%S') parent: ${message}" >> "$SYSTEM_GUARD_LOG" 2>/dev/null || true
 }
 
+process_pid_is_alive() {
+  local pid="$1"
+
+  [[ "$pid" == <-> ]] || return 1
+  kill -0 "$pid" >/dev/null 2>&1 && return 0
+  ps -p "$pid" -o pid= 2>/dev/null | grep -Eq '[0-9]'
+}
+
 system_guard_pid_is_ready() {
   local guard_pid
 
   [[ -s "$SYSTEM_GUARD_PID_FILE" ]] || return 1
   guard_pid="$(< "$SYSTEM_GUARD_PID_FILE")"
-  if [[ "$guard_pid" == <-> ]] && kill -0 "$guard_pid" >/dev/null 2>&1; then
+  if process_pid_is_alive "$guard_pid"; then
     return 0
   fi
   rm -f "$SYSTEM_GUARD_PID_FILE"
+  return 1
+}
+
+system_guard_script_path_is_privacy_managed() {
+  case "${SCRIPT_DIR}/" in
+    "${HOME}/Downloads/"*|"${HOME}/Desktop/"*|"${HOME}/Documents/"*)
+      return 0
+      ;;
+  esac
   return 1
 }
 
@@ -1967,7 +1984,7 @@ wait_for_system_guard_ready() {
     if system_guard_pid_is_ready; then
       return 0
     fi
-    if [[ -n "$launcher_pid" ]] && ! kill -0 "$launcher_pid" >/dev/null 2>&1; then
+    if [[ -n "$launcher_pid" ]] && ! process_pid_is_alive "$launcher_pid"; then
       system_guard_log_parent "fallback launcher exited before guard became ready (pid ${launcher_pid})"
       return 1
     fi
@@ -1995,7 +2012,7 @@ launch_system_guard_nohup() {
 }
 
 start_system_guard() {
-  local parent_pid token launcher_pid="" guard_pid label output rc
+  local parent_pid token launcher_pid="" guard_pid label output="" rc=0 skip_launchctl=0
 
   ensure_state_dir
   parent_pid="$$"
@@ -2010,25 +2027,31 @@ start_system_guard() {
   system_guard_log_parent "state_dir=${STATE_DIR}"
   system_guard_log_parent "script=${SCRIPT_DIR}/jam-usb-internet"
 
-  output="$(
-    run_privileged launchctl submit \
-      -l "$label" \
-      -o "$SYSTEM_GUARD_LOG" \
-      -e "$SYSTEM_GUARD_LOG" \
-      -- /usr/bin/env "JAM_USB_STATE_DIR=$STATE_DIR" "$SCRIPT_DIR/jam-usb-internet" system-guard \
-        --guard-parent-pid "$parent_pid" \
-        --guard-token "$token" 2>&1
-  )"
-  rc=$?
-  system_guard_log_parent "launchctl submit rc=${rc} output=${output:-<empty>}"
-  if (( rc == 0 )); then
+  if system_guard_script_path_is_privacy_managed; then
+    skip_launchctl=1
+    system_guard_log_parent "script is under a privacy-managed user folder; skipping privileged launchctl and trying nohup fallback"
+    info "Using cleanup guard fallback because the package is under Downloads, Desktop, or Documents."
+  else
+    output="$(
+      run_privileged launchctl submit \
+        -l "$label" \
+        -o "$SYSTEM_GUARD_LOG" \
+        -e "$SYSTEM_GUARD_LOG" \
+        -- /usr/bin/env "JAM_USB_STATE_DIR=$STATE_DIR" "$SCRIPT_DIR/jam-usb-internet" system-guard \
+          --guard-parent-pid "$parent_pid" \
+          --guard-token "$token" 2>&1
+    )"
+    rc=$?
+    system_guard_log_parent "launchctl submit rc=${rc} output=${output:-<empty>}"
+  fi
+  if (( ! skip_launchctl && rc == 0 )); then
     if wait_for_system_guard_ready 100 0.1; then
       guard_pid="$(< "$SYSTEM_GUARD_PID_FILE")"
       ok "Started abnormal-exit cleanup guard (pid ${guard_pid}, label ${label})."
       return 0
     fi
     system_guard_log_parent "launchctl guard did not become ready within 10 seconds; trying nohup fallback"
-  else
+  elif (( ! skip_launchctl )); then
     debug "launchctl guard submit failed: $output"
     warn "launchctl guard submit failed: ${output:-unknown error}"
     system_guard_log_parent "launchctl submit failed; trying nohup fallback"

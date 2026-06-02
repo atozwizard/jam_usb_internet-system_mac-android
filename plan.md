@@ -1022,3 +1022,54 @@ Proceed only when checksum verification prints `OK`.
 - recipient-style `shasum -a 256 -c jam-usb-internet-0.4.7.zip.sha256`
 - ZIP integrity check
 - strict app-bundle signature verification
+
+## 18. Downloads Cleanup Guard Fallback Repair
+
+### 18.1 Field Failure
+
+The Galaxy Flip / M3 log showed:
+
+```text
+launchctl submit rc=0
+/bin/zsh: can't open input file: /Users/knocklab/Downloads/.../jam-usb-internet
+nohup fallback launcher pid=...
+cleanup guard started for parent ...
+cleanup guard startup failed after launchctl and nohup attempts
+```
+
+### 18.2 Diagnosis
+
+- Privileged `launchctl` could not reopen the script under the user's privacy-managed `Downloads` folder.
+- The `nohup` fallback did start.
+- The parent rejected the live root-owned fallback because unprivileged `kill -0` returns `operation not permitted`.
+
+### 18.3 Implemented Work
+
+- Bump portable package to `0.4.8`.
+- Add `process_pid_is_alive`.
+- Fall back from `kill -0` to `ps -p` for cross-owner process existence checks.
+- Use the helper for both guard PID and fallback launcher PID validation.
+- Detect `Downloads`, `Desktop`, and `Documents`.
+- Skip privileged `launchctl` and start `nohup` fallback immediately for those folders.
+
+### 18.4 Local Validation
+
+- root PID cross-owner existence simulation with PID 1
+- `Downloads` path detection
+- zsh syntax validation
+- whitespace validation
+
+### 18.5 Field Validation
+
+```zsh
+./jam-usb-internet guard-check
+./jam-usb-internet system
+./jam-usb-internet app-check
+./jam-usb-internet system-stop
+```
+
+If `guard-check` fails:
+
+```zsh
+tail -80 ~/.jam-usb-internet/system-guard.log
+```

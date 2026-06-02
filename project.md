@@ -1771,3 +1771,88 @@ ZIP integrity: passed
 strict app-bundle codesign verification: passed
 generated START_HERE instructions: verified
 ```
+
+## 16. Session Record: 2026-06-02 Downloads Cleanup Guard Fallback
+
+### 16.1 Field Evidence
+
+Galaxy Flip / M3 field log:
+
+```text
+parent: script=/Users/knocklab/Downloads/jam-usb-internet-0.4.6/jam-usb-internet
+parent: launchctl submit rc=0 output=<empty>
+/bin/zsh: can't open input file: /Users/knocklab/Downloads/jam-usb-internet-0.4.6/jam-usb-internet
+parent: launchctl guard did not become ready within 10 seconds; trying nohup fallback
+parent: nohup fallback launcher pid=43138
+cleanup guard started for parent 42669
+parent: cleanup guard startup failed after launchctl and nohup attempts
+```
+
+### 16.2 Root Cause
+
+Two issues combined:
+
+1. The privileged `launchctl submit` context could not reopen the package script under the user's `Downloads` folder. The submitted job kept retrying because `launchctl submit` keeps a failed job alive.
+2. The `nohup` fallback actually started successfully as a root-owned process, but the unprivileged parent used:
+
+   ```zsh
+   kill -0 "$guard_pid"
+   ```
+
+   An unprivileged process receives `operation not permitted` when probing a live root-owned process. The parent misclassified that permission error as a missing process and rejected the working fallback guard.
+
+This was a Mac guard-lifecycle defect, not a Galaxy USB, ADB RSA authorization, or phone internet failure.
+
+### 16.3 Self-Critique
+
+The `0.4.6` repair added a fallback but validated the fallback with a permission-sensitive signal probe. Local tests used same-user processes and therefore did not reproduce the field ownership boundary. Cross-owner process validation was missing.
+
+### 16.4 Implemented Repair
+
+Version `0.4.8`:
+
+1. Adds `process_pid_is_alive`.
+2. Uses `kill -0` when permitted and falls back to `ps -p` existence checking.
+3. Applies the same existence helper to guard PID and fallback launcher PID checks.
+4. Detects package execution under `Downloads`, `Desktop`, or `Documents`.
+5. Skips privileged `launchctl submit` for those privacy-managed user folders.
+6. Starts the `nohup` cleanup guard fallback immediately.
+
+### 16.5 Local Validation
+
+Validated:
+
+```text
+PID 1 root process:
+  unprivileged kill -0: operation not permitted
+  ps -p existence check: passed
+  new process helper result: alive
+
+Downloads path detection: passed
+zsh syntax validation: passed
+git diff whitespace validation: passed
+```
+
+### 16.6 Next Field Procedure
+
+Use the `0.4.8` package. From the unpacked folder:
+
+```zsh
+./jam-usb-internet guard-check
+```
+
+Expected for a package under `Downloads`:
+
+```text
+[info] Using cleanup guard fallback because the package is under Downloads, Desktop, or Documents.
+[ok] Started abnormal-exit cleanup guard fallback ...
+[ok] Cleanup guard check passed.
+```
+
+Then continue:
+
+```zsh
+./jam-usb-internet system
+./jam-usb-internet app-check
+./jam-usb-internet system-stop
+```

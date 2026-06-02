@@ -158,6 +158,8 @@ Galaxy LTE만 강제로 쓰고 싶을 때:
 
 `guard-check`는 관리자 권한 확인, `launchctl` 가드 시작, 정상 해제만 검증한다. `launchctl` 경로가 실패하거나 늦으면 대체 `nohup` 경로도 시도한다. USB 인터넷 라우팅은 설치하지 않는다.
 
+패키지를 `Downloads`, `Desktop`, `Documents` 아래에서 실행하면 privileged `launchctl`이 해당 스크립트를 다시 열지 못할 수 있다. 이 경우 도구는 기다리지 않고 `nohup` 가드 fallback을 바로 사용한다. fallback 가드는 root 소유 프로세스일 수 있으므로 `ps` 기반 생존 확인을 사용한다.
+
 실패하면 다음 로그를 전달한다.
 
 ```zsh

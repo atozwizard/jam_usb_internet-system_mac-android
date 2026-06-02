@@ -158,6 +158,8 @@ Abnormal close behavior:
 
 - `system` starts a `launchctl` cleanup guard before modifying TUN routes or DNS.
 - Guard startup waits up to 10 seconds for `launchctl`, then tries a `nohup` fallback before refusing to modify networking.
+- Packages launched from `Downloads`, `Desktop`, or `Documents` use the `nohup` guard fallback immediately because a privileged `launchctl` job may not be able to reopen scripts from privacy-managed user folders.
+- Guard readiness accepts root-owned processes by checking process existence with `ps` when an unprivileged `kill -0` probe is not permitted.
 - Normal shutdown writes an explicit disarm token for that guard.
 - If the system-mode terminal is force-closed, the guard should notice that the main session disappeared and run recovery automatically.
 - Terminal `HUP`/`TERM` exits are treated as abnormal: the script cleans local state but keeps the guard armed.

@@ -195,6 +195,8 @@ tail -80 ~/.jam-usb-internet/system-guard.log
 
 `guard-check`는 관리자 권한을 확인하고 비정상 종료 복구 가드만 시작했다가 해제한다. USB 인터넷 경로를 활성화하지 않는다.
 
+패키지를 `Downloads`, `Desktop`, `Documents` 아래에서 실행하면 privileged `launchctl` 컨텍스트가 해당 스크립트를 다시 열지 못할 수 있다. 이 경우 도구는 `nohup` 가드 fallback을 바로 사용한다. 이것은 USB나 Galaxy 인증 실패가 아니다.
+
 ## 9. 공식 문서 기준
 
 - Homebrew android-platform-tools cask: https://formulae.brew.sh/cask/android-platform-tools
