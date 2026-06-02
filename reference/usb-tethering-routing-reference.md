@@ -1,6 +1,7 @@
 # Android USB Tethering and macOS Routing References
 
-Date: 2026-05-30
+Created: 2026-05-30
+Updated: 2026-06-02
 Target device: Samsung Galaxy Note 9, Android 10
 Target host: macOS 26.5, arm64
 
@@ -71,43 +72,65 @@ Therefore there are two separate implementation tracks:
    - Key point: Apple's NetworkExtension packet tunnel provider is the supported framework for a packet-oriented custom VPN/tunnel that forwards system packets through a provider.
    - Impact on this project: A production-quality Mac-wide ADB relay solution should eventually move toward NetworkExtension instead of fragile shell-managed TUN/DNS state.
 
+### Runtime and Distribution Trust
+
+9. Apple Support: "Allow USB and other accessories to connect to your Mac"
+   - URL: https://support.apple.com/en-us/102282
+   - Key point: Apple Silicon Mac laptops can require explicit approval before a new or unknown USB accessory receives data access. A denied accessory can still charge.
+   - Impact on this project: Charging alone does not prove USB data access. On a new M3/M4 Mac, unlock the Mac and approve the Galaxy accessory before diagnosing ADB.
+
+10. Android Developers: "Android Debug Bridge (adb)"
+    - URL: https://developer.android.com/tools/adb
+    - Key point: USB ADB requires Developer options > USB debugging. Android 4.2.2 and later show an RSA-key dialog that must be acknowledged on the unlocked device before USB debugging and other ADB commands can execute.
+    - Impact on this project: If the tool has uploaded the relay, created an ADB forward, and completed relay endpoint checks, the Android RSA authorization boundary has already been crossed successfully.
+
+11. Apple Developer: "Developer ID"
+    - URL: https://developer.apple.com/support/developer-id/
+    - Key point: Software distributed outside the Mac App Store can use a Developer ID certificate and Apple notarization so Gatekeeper can verify that it is from an identified developer and has not been tampered with.
+    - Impact on this project: An ad-hoc signature is useful for local bundle-integrity testing but is not the final external-distribution trust solution.
+
+12. Apple Support: "Safely open apps on your Mac"
+    - URL: https://support.apple.com/en-us/HT202491
+    - Key point: Gatekeeper checks Developer ID signatures and notarization for software distributed outside the App Store. macOS can report that an app cannot be opened if it detects modification or damage.
+    - Impact on this project: A damaged-app warning is a separate distribution-signing problem from a `.command` runtime cleanup-guard failure.
+
 ### USB Networking Protocols
 
-9. USB-IF: "CDC Subclass Specification for Ethernet Emulation Model Devices 1.0"
+13. USB-IF: "CDC Subclass Specification for Ethernet Emulation Model Devices 1.0"
    - URL: https://www.usb.org/sites/default/files/CDC_EEM10.pdf
    - Key point: USB CDC Ethernet-style subclasses define standardized ways to carry Ethernet-like network traffic over USB.
    - Impact on this project: macOS compatibility depends on the phone exposing a USB networking function/protocol the Mac can bind as a network service.
 
-10. USB-IF document library: "Network Control Model Devices Specification v1.0"
+14. USB-IF document library: "Network Control Model Devices Specification v1.0"
     - URL: https://www.usb.org/document-library/network-control-model-devices-specification-v10
     - Key point: CDC-NCM is a USB-IF network control model for USB networking.
     - Impact on this project: Modern Android devices that expose CDC-NCM are more likely to work as native USB network devices on macOS than older RNDIS-only devices.
 
-11. Microsoft Learn: "Overview of Remote NDIS (RNDIS)"
+15. Microsoft Learn: "Overview of Remote NDIS (RNDIS)"
     - URL: https://learn.microsoft.com/en-us/windows-hardware/drivers/network/overview-of-remote-ndis--rndis-
     - Key point: RNDIS is a Microsoft-defined network device model over buses such as USB, and Microsoft provides the Windows driver stack for it.
     - Impact on this project: Older Android USB tethering often aligns with Windows/RNDIS expectations. If the Galaxy Note 9 exposes RNDIS-like tethering, macOS may not bind it natively.
 
-12. Microsoft Learn: "USB device class drivers included in Windows"
+16. Microsoft Learn: "USB device class drivers included in Windows"
     - URL: https://learn.microsoft.com/en-us/windows-hardware/drivers/usbcon/supported-usb-classes
     - Key point: Windows has its own USB class driver support matrix, including NCM support in modern versions.
     - Impact on this project: USB tethering interoperability is OS/driver/protocol-specific, not guaranteed by USB cable detection alone.
 
 ### Papers / Books / Research-Grade Sources
 
-13. "(In)Secure Android Debugging: Security analysis and lessons learned"
+17. "(In)Secure Android Debugging: Security analysis and lessons learned"
     - URL: https://www.sciencedirect.com/science/article/pii/S016740481831023X
     - DOI: https://doi.org/10.1016/j.cose.2018.12.010
     - Key point: Academic security analysis of Android debugging and USB-related attack surfaces, including ADB-related risks.
     - Impact on this project: ADB relay mode is practical, but USB debugging should be treated as a trusted-local-device mode and disabled when not needed.
 
-14. "The Android Platform Security Model (2023)"
+18. "The Android Platform Security Model (2023)"
     - URL: https://research.google/pubs/the-android-platform-security-model-2023/
     - arXiv: https://arxiv.org/abs/1904.05572
     - Key point: Research-grade description of Android's security model and tradeoffs.
     - Impact on this project: Helps frame why privileged network/tethering behavior is guarded by user settings, carrier policy, and system components.
 
-15. "Unboxing Android USB: A hands on approach with real world examples", Chapter 4: USB Tethering
+19. "Unboxing Android USB: A hands on approach with real world examples", Chapter 4: USB Tethering
     - URL: https://www.oreilly.com/library/view/unboxing-android-usb/9781430262084/9781430262084_Ch04.xhtml
     - Key point: Technical book coverage of Android USB framework, RNDIS overview, Android USB tethering framework, and reverse tethering.
     - Impact on this project: Useful background for implementation decisions, but less authoritative than Android/AOSP/Apple/Microsoft/USB-IF documentation.

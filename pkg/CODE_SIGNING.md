@@ -73,6 +73,8 @@ Apple documentation:
   https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution
 - Gatekeeper and runtime protection:
   https://support.apple.com/guide/security/gatekeeper-and-runtime-protection-sec5599b66df/web
+- Safely open apps on your Mac:
+  https://support.apple.com/en-us/HT202491
 
 ## 4. Developer ID Build
 
@@ -159,4 +161,3 @@ Do not:
 - disable SIP
 - disable Gatekeeper globally
 - lower macOS Startup Security
-

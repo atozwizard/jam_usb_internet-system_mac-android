@@ -189,5 +189,6 @@ tail -80 ~/.jam-usb-internet/system-guard.log
 - MacBook Pro M3 Pro technical specs: https://support.apple.com/en-ie/117736
 - Apple USB/Thunderbolt accessory security: https://support.apple.com/en-us/102282
 - Apple startup security policy: https://support.apple.com/guide/mac-help/change-security-settings-startup-disk-a-mac-mchl768f7291/mac
+- Apple safely open apps on Mac: https://support.apple.com/en-us/HT202491
 - Android ADB: https://developer.android.com/tools/adb
 - Android tethering help: https://support.google.com/android/answer/9059108
