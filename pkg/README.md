@@ -31,6 +31,15 @@ pkg/dist/jam-usb-internet-<version>.zip.sha256
 
 `pkg/dist/`는 생성물이라 git에 커밋하지 않는다. GitHub 배포가 필요하면 이 zip을 Release asset으로 올린다.
 
+다른 Mac에 무료 배포할 때는 ZIP과 `.sha256` 파일을 함께 전달한다. 사용자는 체크섬을 먼저 검증하고, 신뢰 가능한 ZIP에서 압축을 푼 폴더에만 quarantine 해제를 적용한다.
+
+```zsh
+cd /path/to/download-directory
+shasum -a 256 -c jam-usb-internet-<version>.zip.sha256
+unzip jam-usb-internet-<version>.zip
+xattr -dr com.apple.quarantine jam-usb-internet-<version>
+```
+
 ## Package Contents
 
 배포 폴더에는 다음이 들어간다.
@@ -67,6 +76,7 @@ sing-box check -c configs/sing-box.template.json
 (cd android-relay && GOCACHE="$PWD/.gocache" go test ./...)
 ./jam-usb-internet doctor --json >/dev/null
 ./jam-usb-internet system-status --json >/dev/null
+./jam-usb-internet guard-check
 ./jam-usb-internet app-check
 ui/build-app.sh
 pkg/build-dist.sh

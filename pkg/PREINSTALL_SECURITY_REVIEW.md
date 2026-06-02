@@ -149,11 +149,16 @@ Recovery mode에 들어가 보안 등급을 낮출 필요가 없다.
 
 - Apple Silicon Mac에서 새 USB/Thunderbolt accessory 연결을 허용한다.
 - 서명되지 않은 `.command` 파일은 Finder에서 Control-click 또는 right-click 후 `Open`으로 실행한다.
-- 직접 빌드한 신뢰 가능한 배포물에 한해 quarantine 제거를 사용할 수 있다.
+- 직접 빌드했거나 신뢰 가능한 담당자에게 받은 배포물에 한해, SHA256 체크섬 검증 후 quarantine 제거를 사용할 수 있다.
 
 ```zsh
-xattr -dr com.apple.quarantine /path/to/jam-usb-internet-<version>
+cd /path/to/download-directory
+shasum -a 256 -c jam-usb-internet-<version>.zip.sha256
+unzip jam-usb-internet-<version>.zip
+xattr -dr com.apple.quarantine jam-usb-internet-<version>
 ```
+
+체크섬 결과가 `OK`가 아니면 압축을 풀거나 실행하지 않는다. 출처를 모르는 ZIP에는 `xattr`를 적용하지 않는다.
 
 공식 문서:
 
@@ -214,4 +219,3 @@ SIP off
 Gatekeeper off
 RNDIS driver
 ```
-

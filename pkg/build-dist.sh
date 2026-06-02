@@ -75,13 +75,20 @@ jam-usb-internet ${VERSION}
 4. Install only required dependencies: android-platform-tools and sing-box.
 5. Do not install Android File Transfer for this tool unless you separately need GUI file browsing.
 6. Do not lower macOS security policy, disable SIP, or install RNDIS drivers.
-7. Connect Galaxy by USB data cable.
-8. Set Galaxy USB mode to File Transfer / Android Auto.
-9. Authorize USB debugging.
-10. Double-click: Jam USB Internet.app
+7. For a trusted ZIP only, verify its SHA256 file before removing quarantine:
+   cd /path/to/download-directory
+   shasum -a 256 -c jam-usb-internet-${VERSION}.zip.sha256
+   unzip jam-usb-internet-${VERSION}.zip
+   xattr -dr com.apple.quarantine jam-usb-internet-${VERSION}
+8. Never remove quarantine from an unknown or checksum-mismatched ZIP.
+9. Connect Galaxy by USB data cable.
+10. Set Galaxy USB mode to File Transfer / Android Auto.
+11. Authorize USB debugging.
+12. On a new Mac, run ./jam-usb-internet guard-check once.
+13. Double-click: Jam USB Internet.app
    Fallback: Galaxy USB Internet ON.command
-11. Stop safely with the app's [끄기] button or Galaxy USB Internet OFF.command
-12. If normal Mac internet does not recover, use the app's [복구] button or Galaxy USB Internet RECOVER.command
+14. Stop safely with the app's [끄기] button or Galaxy USB Internet OFF.command
+15. If normal Mac internet does not recover, use the app's [복구] button or Galaxy USB Internet RECOVER.command
 
 Current milestone: TCP/DNS internet for Chrome, Discord text/API, KakaoTalk, and git.
 Known limits: forced close may need RECOVER; Discord voice/video UDP is not covered.
@@ -108,7 +115,7 @@ if [[ -d "${VERIFY_DIR}/${BUNDLE_NAME}/${APP_NAME}" ]]; then
   /usr/bin/codesign --verify --deep --strict --verbose=2 "${VERIFY_DIR}/${BUNDLE_NAME}/${APP_NAME}"
 fi
 
-shasum -a 256 "$ZIP_PATH" > "$SHA_PATH"
+(cd "$DIST_DIR" && shasum -a 256 "${BUNDLE_NAME}.zip" > "${BUNDLE_NAME}.zip.sha256")
 
 echo "Built:"
 echo "  $BUNDLE_DIR"

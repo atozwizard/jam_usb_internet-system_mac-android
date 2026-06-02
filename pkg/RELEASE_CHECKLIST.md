@@ -58,6 +58,18 @@ Mac Wi-Fi가 정상 연결된 상태:
 ./jam-usb-internet system-status
 ```
 
+새 배포 대상 Mac에서는 TUN 라우팅을 바꾸기 전에:
+
+```zsh
+./jam-usb-internet guard-check
+```
+
+실패 시 수집:
+
+```zsh
+tail -80 ~/.jam-usb-internet/system-guard.log
+```
+
 ## Target Device Check
 
 Galaxy 연결 후:
@@ -95,6 +107,16 @@ pkg/dist/jam-usb-internet-<version>/
 pkg/dist/jam-usb-internet-<version>.zip
 pkg/dist/jam-usb-internet-<version>.zip.sha256
 ```
+
+Portable checksum:
+
+```zsh
+cd pkg/dist
+shasum -a 256 -c jam-usb-internet-<version>.zip.sha256
+cd ../..
+```
+
+The `.sha256` file must contain the ZIP basename, not a developer-machine absolute path, so it can be verified on another Mac.
 
 Unzip integrity:
 

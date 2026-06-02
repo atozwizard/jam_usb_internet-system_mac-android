@@ -73,6 +73,8 @@ Apple documentation:
   https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution
 - Gatekeeper and runtime protection:
   https://support.apple.com/guide/security/gatekeeper-and-runtime-protection-sec5599b66df/web
+- Safely open apps on your Mac:
+  https://support.apple.com/en-us/HT202491
 
 ## 4. Developer ID Build
 
@@ -146,17 +148,19 @@ The observed damaged-app error is a signing/package-integrity problem, not an M3
 
 ## 8. Local Test Bypass
 
-For a trusted local development build only, the user may right-click the app and choose `Open`, or remove quarantine after verifying the SHA256 checksum.
+For a trusted local development build only, the user may right-click the app and choose `Open`, or remove quarantine after verifying the supplied SHA256 checksum file.
 
 ```zsh
-xattr -dr com.apple.quarantine "/path/to/jam-usb-internet-<version>"
+cd /path/to/download-directory
+shasum -a 256 -c jam-usb-internet-<version>.zip.sha256
+unzip jam-usb-internet-<version>.zip
+xattr -dr com.apple.quarantine jam-usb-internet-<version>
 ```
 
-This is not the final distribution strategy.
+Continue only if checksum verification prints `OK`. Do not remove quarantine from an unknown or checksum-mismatched ZIP. This is not the final distribution strategy.
 
 Do not:
 
 - disable SIP
 - disable Gatekeeper globally
 - lower macOS Startup Security
-

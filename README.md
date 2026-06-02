@@ -41,6 +41,28 @@ Galaxy System Stop.command
 
 Use **OFF** / **끄기** for normal shutdown. Use **RECOVER** / **복구** if a session was force-closed or normal Mac Wi-Fi internet does not come back.
 
+## Trusted ZIP Setup on Another Mac
+
+The current free distribution uses an ad-hoc signed app bundle. On another Mac, remove quarantine only after verifying a ZIP received from a trusted source.
+
+Place both release files in the same download directory:
+
+```text
+jam-usb-internet-<version>.zip
+jam-usb-internet-<version>.zip.sha256
+```
+
+Then run:
+
+```zsh
+cd /path/to/download-directory
+shasum -a 256 -c jam-usb-internet-<version>.zip.sha256
+unzip jam-usb-internet-<version>.zip
+xattr -dr com.apple.quarantine jam-usb-internet-<version>
+```
+
+Continue only if checksum verification prints `OK`. Do not remove quarantine from an unknown ZIP or a checksum-mismatched ZIP. Do not disable Gatekeeper globally, disable SIP, or lower macOS Startup Security.
+
 ## Phone Setup
 
 On the Galaxy Note 9:
@@ -102,6 +124,7 @@ pkg/PREINSTALL_SECURITY_REVIEW.md
 ./jam-usb-internet proxy-stop
 ./jam-usb-internet system-status
 ./jam-usb-internet system-stop
+./jam-usb-internet guard-check
 ./jam-usb-internet status
 ./jam-usb-internet doctor
 ./jam-usb-internet restore
@@ -122,16 +145,21 @@ To inspect or stop:
 ./jam-usb-internet system-status
 ./jam-usb-internet system-stop
 ./jam-usb-internet system-recover
+./jam-usb-internet guard-check
 ./jam-usb-internet app-check
 ```
 
 `system-stop` also repairs stale local DNS if a failed run left a network service pointing at `127.0.0.1`.
 `system-recover` is the stronger panic button: it stops TUN/proxy/relay state, repairs stale DNS, and then checks Chrome-style HTTPS, Discord, Kakao, and git connectivity.
+`guard-check` starts and disarms only the abnormal-exit cleanup guard. It does not install TUN routes or change DNS. Run it before `system` when a new Mac reports `Could not start abnormal-exit cleanup guard`.
 `system --check-only` does not start the privileged TUN. It uploads the Android relay, starts the ADB forward, and checks Chrome/web, Discord, Kakao, and git-style HTTPS through the relay. If this fails, the blocker is Android relay/phone internet/DNS, not Mac TUN routing.
 
 Abnormal close behavior:
 
 - `system` starts a `launchctl` cleanup guard before modifying TUN routes or DNS.
+- Guard startup waits up to 10 seconds for `launchctl`, then tries a `nohup` fallback before refusing to modify networking.
+- Packages launched from `Downloads`, `Desktop`, or `Documents` use the `nohup` guard fallback immediately because a privileged `launchctl` job may not be able to reopen scripts from privacy-managed user folders.
+- Guard readiness accepts root-owned processes by checking process existence with `ps` when an unprivileged `kill -0` probe is not permitted.
 - Normal shutdown writes an explicit disarm token for that guard.
 - If the system-mode terminal is force-closed, the guard should notice that the main session disappeared and run recovery automatically.
 - Terminal `HUP`/`TERM` exits are treated as abnormal: the script cleans local state but keeps the guard armed.

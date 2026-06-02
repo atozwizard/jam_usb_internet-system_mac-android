@@ -105,7 +105,7 @@ Apple Silicon Mac에서는 새 USB/Thunderbolt accessory가 Mac과 통신하기 
 docs/CODE_SIGNING.md
 ```
 
-배포 zip을 직접 만든 신뢰 가능한 파일로 쓰는 경우에만 다음 중 하나를 사용한다.
+배포 zip을 직접 만들었거나 신뢰 가능한 담당자에게 받은 경우에만 다음 중 하나를 사용한다.
 
 권장:
 
@@ -113,15 +113,28 @@ docs/CODE_SIGNING.md
 2. `Open`을 선택한다.
 3. macOS 경고창에서 다시 `Open`을 선택한다.
 
-로컬에서 직접 빌드한 zip을 풀었고 quarantine 때문에 실행이 막힐 때:
+ZIP과 함께 받은 `.sha256` 파일을 같은 폴더에 둔다.
+
+```text
+jam-usb-internet-<version>.zip
+jam-usb-internet-<version>.zip.sha256
+```
+
+quarantine 때문에 앱 실행이 막힐 때는 먼저 체크섬을 검증하고, 압축을 푼 배포 폴더에만 quarantine 해제를 적용한다.
 
 ```zsh
-xattr -dr com.apple.quarantine /path/to/jam-usb-internet-<version>
+cd /path/to/download-directory
+shasum -a 256 -c jam-usb-internet-<version>.zip.sha256
+unzip jam-usb-internet-<version>.zip
+xattr -dr com.apple.quarantine jam-usb-internet-<version>
 ```
 
 주의:
 
+- 체크섬 검증 결과가 `OK`일 때만 다음 단계로 진행한다.
 - 출처를 모르는 zip에는 이 명령을 쓰지 않는다.
+- 체크섬이 맞지 않으면 압축을 풀거나 실행하지 말고 새 파일을 받는다.
+- `xattr`는 압축을 푼 `jam-usb-internet-<version>` 폴더에만 적용한다.
 - 이 프로젝트는 USB debugging과 관리자 권한을 사용하므로 신뢰 경계를 명확히 해야 한다.
 
 ## 6. 관리자 권한
@@ -165,12 +178,32 @@ MacBook Pro M3 Pro는 Thunderbolt 4 / USB 4 포트를 가진다. ADB relay 방�
 
 다만 native Android USB tethering을 Mac USB LAN으로 인식하는 방식은 공식 Android 문서 기준으로 신뢰하지 않는다. 이 프로젝트는 그 경로를 기본으로 쓰지 않는다.
 
-## 8. 공식 문서 기준
+## 8. cleanup guard 진단
+
+새 Mac에서 다음 오류가 나오면 TUN 라우팅이나 DNS는 변경되지 않은 상태다.
+
+```text
+[fail] Could not start abnormal-exit cleanup guard; refusing to modify TUN routes/DNS.
+```
+
+다음을 실행한다.
+
+```zsh
+./jam-usb-internet guard-check
+tail -80 ~/.jam-usb-internet/system-guard.log
+```
+
+`guard-check`는 관리자 권한을 확인하고 비정상 종료 복구 가드만 시작했다가 해제한다. USB 인터넷 경로를 활성화하지 않는다.
+
+패키지를 `Downloads`, `Desktop`, `Documents` 아래에서 실행하면 privileged `launchctl` 컨텍스트가 해당 스크립트를 다시 열지 못할 수 있다. 이 경우 도구는 `nohup` 가드 fallback을 바로 사용한다. 이것은 USB나 Galaxy 인증 실패가 아니다.
+
+## 9. 공식 문서 기준
 
 - Homebrew android-platform-tools cask: https://formulae.brew.sh/cask/android-platform-tools
 - Homebrew sing-box formula: https://formulae.brew.sh/formula/sing-box
 - MacBook Pro M3 Pro technical specs: https://support.apple.com/en-ie/117736
 - Apple USB/Thunderbolt accessory security: https://support.apple.com/en-us/102282
 - Apple startup security policy: https://support.apple.com/guide/mac-help/change-security-settings-startup-disk-a-mac-mchl768f7291/mac
+- Apple safely open apps on Mac: https://support.apple.com/en-us/HT202491
 - Android ADB: https://developer.android.com/tools/adb
 - Android tethering help: https://support.google.com/android/answer/9059108

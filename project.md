@@ -1598,3 +1598,261 @@ If the terminal was force-closed or normal Wi-Fi does not recover, users should 
 ```text
 Galaxy USB Internet RECOVER.command
 ```
+
+## 14. Session Record: 2026-06-02 Galaxy Flip and M3 Cleanup Guard Failure
+
+### 14.1 Field Environment
+
+- Mac account home: `/Users/knocklab`
+- Mac model class: Apple Silicon M3
+- Android device class: Galaxy Flip
+- Entry point: packaged `.command` shell launcher
+
+### 14.2 Field Log
+
+The relay preparation completed before the failure:
+
+```text
+[ok] System mode is ready to start.
+[info] TUN routing and local DNS setup need macOS administrator permission.
+[info] Keep this terminal open. Press Ctrl-C to stop and clean up.
+
+[warn] Could not start abnormal-exit cleanup guard. See: /Users/knocklab/.jam-usb-internet/system-guard.log
+[fail] Could not start abnormal-exit cleanup guard; refusing to modify TUN routes/DNS.
+[ok] Stopped Android relay if it was running.
+[ok] Removed ADB forward tcp:18080 if it existed.
+```
+
+### 14.3 Failure Boundary
+
+The failure occurred after Android relay checks and before TUN route or DNS mutation.
+
+This means:
+
+- Galaxy USB debugging authorization was sufficient to upload and run the relay.
+- ADB forwarding was sufficient to validate relay connectivity.
+- The failure was not evidence that Galaxy Flip USB data mode, Galaxy Wi-Fi/LTE, or Android relay connectivity had failed.
+- The script correctly failed closed before changing Mac networking.
+
+### 14.4 Cleanup Guard Defect
+
+The previous startup implementation had a narrow readiness window:
+
+```text
+20 attempts * 0.1 seconds = 2 seconds
+```
+
+If privileged `launchctl submit` returned success but the guard process did not create `system-guard.pid` within that window, startup failed immediately. The fallback path was used only when `launchctl submit` returned a non-zero status. A slow successful launch could therefore fail without trying the fallback.
+
+### 14.5 Implemented Repair
+
+Version `0.4.6` changes cleanup guard startup:
+
+1. Wait up to 10 seconds for the submitted `launchctl` guard.
+2. Treat a PID file as ready only when it contains a numeric PID and that process is alive.
+3. Try an absolute-path `/usr/bin/nohup /usr/bin/env ...` fallback when `launchctl` fails or does not become ready in time.
+4. Redirect fallback stdin from `/dev/null`.
+5. Write parent-side diagnostics to `~/.jam-usb-internet/system-guard.log`.
+6. Print the last 20 guard-log lines when both startup methods fail.
+7. Add `guard-check`, which tests guard start and disarm without modifying routes or DNS.
+
+### 14.6 Local Validation
+
+Validated on the development Mac with isolated temporary state directories:
+
+```text
+direct system-guard launch: passed
+user launchctl submit launch: passed
+nohup fallback launch: passed
+zsh syntax validation: passed
+```
+
+An interactive administrator-path validation is still required on the Galaxy Flip / M3 field Mac because the development shell had no cached non-interactive sudo credential.
+
+### 14.7 Authentication and Trust Separation
+
+There are separate trust boundaries:
+
+1. Android USB debugging authorization:
+   - required for ADB relay upload and forwarding;
+   - already passed far enough in the field log to reach system-mode readiness.
+2. macOS administrator authorization:
+   - required for cleanup guard, TUN route, DNS, and sing-box operations;
+   - the field failure occurred in this runtime area.
+3. macOS Gatekeeper trust for `Jam USB Internet.app`:
+   - ad-hoc signed local packages can still require manual opening or quarantine removal;
+   - polished external distribution requires Developer ID Application signing and Apple notarization;
+   - this is separate from the `.command` cleanup-guard failure.
+
+### 14.8 Next Field Procedure
+
+Before starting USB internet on the Galaxy Flip / M3 Mac:
+
+```zsh
+./jam-usb-internet guard-check
+```
+
+If it fails:
+
+```zsh
+tail -80 ~/.jam-usb-internet/system-guard.log
+```
+
+Collect the full output before running `system`. If `guard-check` passes, continue:
+
+```zsh
+./jam-usb-internet system
+./jam-usb-internet app-check
+./jam-usb-internet system-stop
+```
+
+## 15. Session Record: 2026-06-02 Trusted ZIP Quarantine Guidance
+
+### 15.1 Request
+
+Document the free-distribution path for another Mac:
+
+- use the ad-hoc signed `.app` bundle without purchasing a Developer ID membership;
+- remove quarantine only for a trusted ZIP;
+- do not weaken system-wide Mac security.
+
+### 15.2 Self-Critique
+
+The previous package already generated:
+
+```text
+jam-usb-internet-<version>.zip.sha256
+```
+
+but its checksum line contained the developer Mac's absolute ZIP path. That was inconvenient for a recipient because `shasum -c` should work from the recipient's download directory without editing the checksum file.
+
+### 15.3 Implemented Repair
+
+Version `0.4.7` changes packaging and documentation:
+
+1. Generate the SHA256 file from inside `pkg/dist`, so it records the ZIP basename only.
+2. Include trusted-ZIP setup steps in generated `START_HERE.txt`.
+3. Add the same procedure to the project README and package guides.
+4. Require checksum verification before quarantine removal.
+5. Explicitly forbid applying `xattr` to an unknown or checksum-mismatched ZIP.
+6. Keep Gatekeeper, SIP, and macOS Startup Security enabled.
+
+### 15.4 Recipient Procedure
+
+Place both files in the same trusted download directory:
+
+```text
+jam-usb-internet-<version>.zip
+jam-usb-internet-<version>.zip.sha256
+```
+
+Then run:
+
+```zsh
+cd /path/to/download-directory
+shasum -a 256 -c jam-usb-internet-<version>.zip.sha256
+unzip jam-usb-internet-<version>.zip
+xattr -dr com.apple.quarantine jam-usb-internet-<version>
+```
+
+Continue only if the checksum command prints:
+
+```text
+jam-usb-internet-<version>.zip: OK
+```
+
+### 15.5 Validation
+
+Validated with the generated `0.4.7` artifact:
+
+```text
+portable shasum -c verification: passed
+ZIP integrity: passed
+strict app-bundle codesign verification: passed
+generated START_HERE instructions: verified
+```
+
+## 16. Session Record: 2026-06-02 Downloads Cleanup Guard Fallback
+
+### 16.1 Field Evidence
+
+Galaxy Flip / M3 field log:
+
+```text
+parent: script=/Users/knocklab/Downloads/jam-usb-internet-0.4.6/jam-usb-internet
+parent: launchctl submit rc=0 output=<empty>
+/bin/zsh: can't open input file: /Users/knocklab/Downloads/jam-usb-internet-0.4.6/jam-usb-internet
+parent: launchctl guard did not become ready within 10 seconds; trying nohup fallback
+parent: nohup fallback launcher pid=43138
+cleanup guard started for parent 42669
+parent: cleanup guard startup failed after launchctl and nohup attempts
+```
+
+### 16.2 Root Cause
+
+Two issues combined:
+
+1. The privileged `launchctl submit` context could not reopen the package script under the user's `Downloads` folder. The submitted job kept retrying because `launchctl submit` keeps a failed job alive.
+2. The `nohup` fallback actually started successfully as a root-owned process, but the unprivileged parent used:
+
+   ```zsh
+   kill -0 "$guard_pid"
+   ```
+
+   An unprivileged process receives `operation not permitted` when probing a live root-owned process. The parent misclassified that permission error as a missing process and rejected the working fallback guard.
+
+This was a Mac guard-lifecycle defect, not a Galaxy USB, ADB RSA authorization, or phone internet failure.
+
+### 16.3 Self-Critique
+
+The `0.4.6` repair added a fallback but validated the fallback with a permission-sensitive signal probe. Local tests used same-user processes and therefore did not reproduce the field ownership boundary. Cross-owner process validation was missing.
+
+### 16.4 Implemented Repair
+
+Version `0.4.8`:
+
+1. Adds `process_pid_is_alive`.
+2. Uses `kill -0` when permitted and falls back to `ps -p` existence checking.
+3. Applies the same existence helper to guard PID and fallback launcher PID checks.
+4. Detects package execution under `Downloads`, `Desktop`, or `Documents`.
+5. Skips privileged `launchctl submit` for those privacy-managed user folders.
+6. Starts the `nohup` cleanup guard fallback immediately.
+
+### 16.5 Local Validation
+
+Validated:
+
+```text
+PID 1 root process:
+  unprivileged kill -0: operation not permitted
+  ps -p existence check: passed
+  new process helper result: alive
+
+Downloads path detection: passed
+zsh syntax validation: passed
+git diff whitespace validation: passed
+```
+
+### 16.6 Next Field Procedure
+
+Use the `0.4.8` package. From the unpacked folder:
+
+```zsh
+./jam-usb-internet guard-check
+```
+
+Expected for a package under `Downloads`:
+
+```text
+[info] Using cleanup guard fallback because the package is under Downloads, Desktop, or Documents.
+[ok] Started abnormal-exit cleanup guard fallback ...
+[ok] Cleanup guard check passed.
+```
+
+Then continue:
+
+```zsh
+./jam-usb-internet system
+./jam-usb-internet app-check
+./jam-usb-internet system-stop
+```
